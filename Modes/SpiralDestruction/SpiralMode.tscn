@@ -1,0 +1,33 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://Modes/SpiralDestruction/SpiralMode.gd" id="1_spiralmode"]
+[ext_resource type="Script" path="res://Modes/SpiralDestruction/Systems/SpiralMapController.gd" id="2_mapctrl"]
+[ext_resource type="Script" path="res://Modes/SpiralDestruction/Systems/SpiralRenderController.gd" id="3_renderctrl"]
+[ext_resource type="Script" path="res://Modes/SpiralDestruction/Entities/Ball.gd" id="4_ball"]
+[ext_resource type="Script" path="res://Shared/Effects/ScreenShake.gd" id="5_shake"]
+
+[node name="SpiralMode" type="Node2D"]
+script = ExtResource("1_spiralmode")
+
+[node name="SpiralMapController" type="Node" parent="."]
+script = ExtResource("2_mapctrl")
+
+[node name="SpiralRenderController" type="Node2D" parent="."]
+script = ExtResource("3_renderctrl")
+
+[node name="Ball" type="Node2D" parent="."]
+script = ExtResource("4_ball")
+
+[node name="BallVisual" type="MeshInstance2D" parent="Ball"]
+
+[node name="Trail" type="Line2D" parent="Ball"]
+width = 8.0
+
+[node name="CenterGlow" type="PointLight2D" parent="."]
+position = Vector2(540, 960)
+color = Color(1, 0.6, 0.1, 1)
+energy = 1.4
+texture_scale = 3.0
+
+[node name="ScreenShake" type="Node" parent="."]
+script = ExtResource("5_shake")

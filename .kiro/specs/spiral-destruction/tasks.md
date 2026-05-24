@@ -54,8 +54,7 @@ Tất cả tasks đã hoàn thành. Danh sách dưới đây để tham chiếu.
 - [x] Fade out: tween modulate alpha → 0 trong 1.5s sau win
 - [x] Phím R/ESC để reset nhanh
 
-## M8 — Polish & Recording
-- [x] Movie Writer config: output/clip.avi, 60 FPS
+## M8 — Polish
 - [x] Parameters tuned cho clip ~60s
 - [x] Performance: 3 draw calls, zero GC, spatial grid O(1)
 - [x] Reset cycle tức thì (không reload scene)

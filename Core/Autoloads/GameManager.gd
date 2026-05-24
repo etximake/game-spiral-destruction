@@ -1,5 +1,5 @@
 ## GameManager.gd
-## Singleton — State machine trung tâm + Mode registry.
+## Singleton — State machine trung tâm + Mode registry (config-driven).
 ## Quản lý vòng đời simulation: IDLE → RUNNING → COMPLETED → RESETTING → RUNNING
 extends Node
 
@@ -11,17 +11,18 @@ enum State {
 	RESETTING,  # Đang reset (tức thì, không reload scene)
 }
 
-# ── Mode Registry ─────────────────────────────────────────────────────────────
-## Đăng ký tất cả simulation modes ở đây.
-## Key: mode_id (String), Value: đường dẫn scene
-const MODE_REGISTRY: Dictionary = {
-	"spiral": "res://Modes/SpiralDestruction/SpiralMode.tscn",
+# ── Mode Config Registry ──────────────────────────────────────────────────────
+## Ánh xạ mode_id → đường dẫn file config JSON.
+## Mỗi mode có 1 file config.json trong thư mục mode của nó.
+const MODE_CONFIG_REGISTRY: Dictionary = {
+	"spiral": "res://Modes/SpiralDestruction/config.json",
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────
 var current_state: State = State.IDLE
 var current_mode_id: String = ""
 var _simulation_start_time: float = 0.0
+var _current_config: Dictionary = {}
 
 ## Reference đến SimulationContainer node trong GameScene
 var _simulation_container: Node2D = null
@@ -47,12 +48,30 @@ func initialize(simulation_container: Node2D) -> void:
 
 ## Load và bắt đầu một mode theo ID
 func start_mode(mode_id: String) -> void:
-	if not MODE_REGISTRY.has(mode_id):
+	if not MODE_CONFIG_REGISTRY.has(mode_id):
 		push_error("GameManager: mode_id '%s' không tồn tại trong registry" % mode_id)
 		return
 
 	current_mode_id = mode_id
+	
+	# Load config từ JSON
+	var config_path: String = MODE_CONFIG_REGISTRY[mode_id]
+	var loader_script = load("res://Core/Base/ModeConfigLoader.gd")
+	var loader = loader_script.new() as Object
+	_current_config = loader.load_config(config_path)
+	
+	if _current_config.is_empty():
+		push_error("GameManager: Lỗi load config cho mode '%s': %s" % [mode_id, loader.last_error])
+		return
+	
+	# Áp dụng viewport settings từ config
+	_apply_viewport_config(_current_config)
+	
 	_load_mode_scene(mode_id)
+
+## Trả về config đang dùng (cho các hệ thống khác đọc nếu cần)
+func get_current_config() -> Dictionary:
+	return _current_config
 
 ## Yêu cầu reset simulation hiện tại (không reload scene)
 func request_reset() -> void:
@@ -75,6 +94,12 @@ func get_elapsed_time() -> float:
 		return 0.0
 	return (Time.get_ticks_msec() / 1000.0) - _simulation_start_time
 
+## Áp dụng cấu hình viewport từ config (màu nền, v.v.)
+func _apply_viewport_config(config: Dictionary) -> void:
+	var vp: Dictionary = config.get("viewport", {})
+	var bg_color_str: String = vp.get("background_color", "#000000")
+	RenderingServer.set_default_clear_color(Color(bg_color_str))
+
 # ── Private ───────────────────────────────────────────────────────────────────
 
 func _load_mode_scene(mode_id: String) -> void:
@@ -83,7 +108,11 @@ func _load_mode_scene(mode_id: String) -> void:
 		_current_simulation.queue_free()
 		_current_simulation = null
 
-	var scene_path: String = MODE_REGISTRY[mode_id]
+	var scene_path: String = _current_config.get("meta", {}).get("scene_path", "")
+	if scene_path.is_empty():
+		push_error("GameManager: config thiếu meta.scene_path cho mode '%s'" % mode_id)
+		return
+		
 	var packed_scene: PackedScene = load(scene_path)
 	if packed_scene == null:
 		push_error("GameManager: không load được scene '%s'" % scene_path)
@@ -92,6 +121,10 @@ func _load_mode_scene(mode_id: String) -> void:
 	_current_simulation = packed_scene.instantiate()
 	_simulation_container.add_child(_current_simulation)
 
+	# Truyền config vào mode (nếu mode hỗ trợ set_config)
+	if _current_simulation.has_method("set_config"):
+		_current_simulation.set_config(_current_config)
+	
 	# Gọi setup() rồi start()
 	if _current_simulation.has_method("setup"):
 		_current_simulation.setup()

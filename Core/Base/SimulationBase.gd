@@ -4,6 +4,13 @@
 ## Đảm bảo interface nhất quán để GameManager có thể gọi mà không cần biết mode cụ thể.
 extends Node2D
 
+# ── Config (được set bởi GameManager khi load mode) ──────────────────────────
+var _config: Dictionary = {}
+
+## Set config từ ModeConfigLoader. Gọi trước setup().
+func set_config(config: Dictionary) -> void:
+	_config = config
+
 # ── Interface bắt buộc override ───────────────────────────────────────────────
 
 ## Gọi một lần khi scene được load vào SimulationContainer.

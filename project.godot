@@ -14,20 +14,20 @@ config/name="game-spiral-destruction"
 run/main_scene="res://Core/GameScene.tscn"
 config/features=PackedStringArray("4.5", "Mobile")
 config/icon="res://icon.svg"
-config/run/main_scene="res://Core/GameScene.tscn"
-autoload/EventBus="*res://Core/Autoloads/EventBus.gd"
-autoload/ObjectPool="*res://Core/Autoloads/ObjectPool.gd"
-autoload/GameManager="*res://Core/Autoloads/GameManager.gd"
+
+[autoload]
+
+EventBus="*res://Core/Autoloads/EventBus.gd"
+ObjectPool="*res://Core/Autoloads/ObjectPool.gd"
+GameManager="*res://Core/Autoloads/GameManager.gd"
 
 [display]
 
 window/size/viewport_width=1080
 window/size/viewport_height=1920
+window/size/window_width_override=540
+window/size/window_height_override=960
 window/stretch/mode="canvas_items"
-
-[editor]
-
-movie_writer/movie_file="res://output/clip.avi"
 
 [rendering]
 

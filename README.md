@@ -22,14 +22,7 @@ Dùng Godot như **máy quay phim**, không phải game engine. Mỗi mode là m
 
 ## Quay video
 
-```bash
-Godot_v4.5-stable_win64_console.exe --path "." --write-movie "output/clip.avi"
-```
-
-Convert sang MP4:
-```bash
-ffmpeg -i output/clip.avi -c:v libx264 -crf 18 -preset slow output/clip.mp4
-```
+Dùng OBS Studio capture cửa sổ Godot khi game đang chạy (F5).
 
 ## Cấu trúc project
 

@@ -1,6 +1,7 @@
 # 🏗️ KIẾN TRÚC KỸ THUẬT — GODOT CONTENT ENGINE
-**Phiên bản:** 1.0  
+**Phiên bản:** 2.0  
 **Engine:** Godot 4.5 | GDScript | Mobile Renderer 2D
+**Config-Driven:** Mọi Simulation Mode được cấu hình qua JSON
 
 ---
 
@@ -12,21 +13,27 @@ Ba nguyên tắc bất biến:
 2. **1 Draw Call cho geometry** — Toàn bộ hình học tĩnh render qua `MultiMeshInstance2D`.
 3. **Decoupled hoàn toàn** — UI, Logic, Render không biết nhau. Giao tiếp chỉ qua `EventBus`.
 
+**Nguyên tắc mới (v2.0):**
+4. **Config-Driven** — Mọi tham số của mode nằm trong file `configs/{mode_id}.json`, không hardcode trong code.
+
 ---
 
 ## 2. CẤU TRÚC THƯ MỤC DỰ ÁN
 
 ```
 res://
+├── configs/                          # 🆕 Config JSON cho mọi mode
+│   └── spiral_destruction.json
+│
 ├── Core/
 │   ├── Autoloads/
-│   │   ├── EventBus.gd          # Singleton: tín hiệu toàn cục
-│   │   ├── ObjectPool.gd        # Singleton: tái chế particles/debris
-│   │   └── GameManager.gd       # Singleton: state machine, mode registry
+│   │   ├── EventBus.gd               # Singleton: tín hiệu toàn cục
+│   │   ├── ObjectPool.gd             # Singleton: tái chế particles/debris
+│   │   └── GameManager.gd            # Singleton: state machine, config registry
 │   ├── Base/
-│   │   ├── SimulationBase.gd    # Abstract class: interface cho mọi Mode
-│   │   └── RenderBase.gd        # Abstract class: interface cho renderer
-│   └── GameScene.tscn           # Scene gốc, load Mode động
+│   │   ├── SimulationBase.gd         # Abstract class: interface cho mọi Mode
+│   │   └── ModeConfigLoader.gd       # 🆕 Parse + validate JSON config
+│   └── GameScene.tscn                # Scene gốc, load Mode động
 │
 ├── Modes/
 │   ├── SpiralDestruction/
@@ -36,17 +43,16 @@ res://
 │   │   │   ├── SpiralMapController.gd
 │   │   │   └── SpiralRenderController.gd
 │   │   └── Entities/
-│   │       ├── Ball.tscn
-│   │       └── Ball.gd
+│   │       └── Ball.gd               # (Ball.tscn đã gộp vào scene)
 │   │
-│   └── {ModeName}/              # Mỗi mode là một folder độc lập
+│   └── {ModeName}/                   # Mỗi mode là một folder độc lập
 │       └── ...
 │
 ├── Shared/
 │   ├── Effects/
-│   │   ├── DebrisParticle.tscn  # Pooled particle prefab
-│   │   ├── TrailEffect.gd       # Ball trail renderer
-│   │   └── ScreenShake.gd       # Camera shake utility
+│   │   ├── GlassDebris.gd            # Hiệu ứng vỡ kính
+│   │   ├── DopamineEmojiExplosion.gd # Hiệu ứng win
+│   │   └── ScreenShake.gd            # Camera shake utility
 │   └── Audio/
 │       └── AudioManager.gd      # Pitch escalation, SFX pool
 │
@@ -100,19 +106,25 @@ Pool types:
 ```
 
 ### 4.3. GameManager.gd
-State machine + Mode registry.
+State machine + Mode Config Registry (config-driven).
 
 ```
+Flow khi start_mode("spiral"):
+1. Đọc file JSON từ MODE_CONFIG_REGISTRY["spiral"]
+2. ModeConfigLoader.parse() → validate → Dictionary
+3. Load scene từ config["meta"]["scene_path"]
+4. Gọi mode.set_config(config)  # truyền config vào mode
+5. Gọi mode.setup() → mode.start()
+
 States:
 ├── IDLE       → Chờ bắt đầu
 ├── RUNNING    → Simulation đang chạy
-├── PAUSED     → Tạm dừng (giữ frame hiện tại)
 ├── COMPLETED  → Simulation kết thúc, hiện end screen
 └── RESETTING  → Reset tức thì, không reload scene
 
-Mode Registry:
-└── Dictionary { mode_id: PackedScene }
-    Ví dụ: { "spiral": preload("res://Modes/SpiralDestruction/SpiralMode.tscn") }
+Mode Config Registry:
+└── Dictionary { mode_id: config_path }
+    Ví dụ: { "spiral": "res://Modes/SpiralDestruction/config.json" }
 ```
 
 ---
@@ -122,8 +134,12 @@ Mode Registry:
 Mọi Mode phải implement `SimulationBase.gd`:
 
 ```gdscript
-class_name SimulationBase
-extends Node2D
+# Config (set bởi GameManager trước setup)
+var _config: Dictionary = {}
+
+func set_config(config: Dictionary) -> void:
+    """Nhận config từ JSON (gọi trước setup())."""
+    _config = config
 
 # Gọi khi Mode được load vào SimulationContainer
 func setup() -> void: pass

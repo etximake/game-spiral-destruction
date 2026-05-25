@@ -112,7 +112,9 @@ func _apply_viewport_config(config: Dictionary) -> void:
 		var w: int = int(res_arr[0])
 		var h: int = int(res_arr[1])
 		if w > 0 and h > 0:
-			DisplayServer.window_set_size(Vector2i(w, h))
+			# Bỏ qua resize nếu window đang ở embedded/editor mode
+			if DisplayServer.window_get_size() != Vector2i(w, h):
+				DisplayServer.window_set_size(Vector2i(w, h))
 
 # ── Private ───────────────────────────────────────────────────────────────────
 

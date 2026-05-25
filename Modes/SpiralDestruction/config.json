@@ -61,7 +61,7 @@
       "min_multiplier": 1.5,
       "max_multiplier": 4.0
     },
-    "trail_length": 7,
+    "trail_length": 5,
     "win_distance": 30.0,
     "color": [255, 100, 20],
     "visual_segments": 16,
@@ -93,9 +93,9 @@
     "tests": [
       { "radius": 45.0, "speed": 800.0, "shrink": false },
       { "radius": 40.0, "speed": 900.0, "shrink": false },
-      { "radius": 35.0, "speed": 1000.0, "shrink": false },
-      { "radius": 30, "speed": 1200.0, "shrink": false },
-      { "radius": 25.0, "speed": 1200.0, "shrink": false }
+      { "radius": 35.0, "speed": 950.0, "shrink": false },
+      { "radius": 30, "speed": 1000.0, "shrink": false },
+      { "radius": 25.0, "speed": 1100.0, "shrink": false }
     ]
   },
 
@@ -112,8 +112,8 @@
 
   "win_effect": {
     "emoji": "\uD83D\uDE0A",
-    "font_size": 80,
-    "emoji_size": [160, 160],
+    "font_size": 100,
+    "emoji_size": [200, 200],
     "celebration_emojis": ["\uD83D\uDE0A"],
     "confetti_colors": [
       [1.0, 0.2, 0.2], [0.2, 1.0, 0.2], [0.2, 0.2, 1.0],
@@ -140,9 +140,11 @@
     "pitch_max": 2.5,
     "pitch_reset_delay": 1.0,
     "pitch_variation": 0.1,
-    "brick_sound_path": "res://Audio/dry-fart.mp3",
-    "fail_sound_path": "res://Audio/error-notification.mp3",
-    "win_sound_path": "res://Audio/check-mark_oPG7Xo5.mp3"
+    "bounce_sound_path": "res://Audio/dry-fart.mp3",
+    "brick_sound_path": "res://Audio/glass-breaks-v1.mp3",
+    "fail_sound_path": "res://Audio/error-sonido (mp3cut.net).mp3",
+    "win_sound_path": "res://Audio/yeahoo.mp3",
+    "win_sound_secondary_path": "res://Audio/anime-wow-sound-effect (mp3cut.net).mp3"
   },
 
   "hud": {

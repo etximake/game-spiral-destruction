@@ -2,7 +2,10 @@
 ## Module quay video — ghi lại màn hình gameplay.
 ## Chỉ ghi khi nhấn Space → game chạy, dừng khi game kết thúc.
 ##
-## Yêu cầu: Cài FFmpeg (https://ffmpeg.org/) và thêm vào PATH.
+## Yêu cầu: FFmpeg (https://ffmpeg.org/)
+##   - Cách 1 (khuyên dùng): Copy ffmpeg.exe vào cùng thư mục file game
+##   - Cách 2: Cài FFmpeg vào PATH
+##   - Cách 3: Set đường dẫn trong config.json → recording.ffmpeg_path
 ##
 ## Cách dùng:
 ##   1. Mở game bình thường (không cần flag --write-movie)
@@ -36,7 +39,7 @@ func _ready() -> void:
 	
 	if _ffmpeg_available:
 		# Tạo thư mục output
-		DirAccess.make_dir_recursive_absolute("user://recordings")
+		DirAccess.make_dir_recursive_absolute("D:\\Tai lieu kenh algodoo\\game-spiral-destruction\\output")
 		print("[VideoRecorder] ✅ FFmpeg available — chờ Space để ghi hình")
 	else:
 		print("[VideoRecorder] ❌ Không tìm thấy FFmpeg. Tải tại: https://ffmpeg.org/")
@@ -73,78 +76,91 @@ func _process(delta: float) -> void:
 
 func _check_ffmpeg() -> bool:
 	var output: Array = []
-	# Thử "ffmpeg" trong PATH trước (nhanh nhất)
+
+	# Helper: kiểm tra file tồn tại rồi mới execute (tránh warning)
+	var _try_exec := func(path: String) -> bool:
+		if not FileAccess.file_exists(path):
+			return false
+		return OS.execute(path, ["-version"], output, true) == 0
+
+	# 1. ffmpeg/bin/ffmpeg.exe trong thư mục project (res://ffmpeg/bin/)
+	var project_ffmpeg_bin: String = ProjectSettings.globalize_path("res://ffmpeg/bin/ffmpeg.exe")
+	if _try_exec.call(project_ffmpeg_bin):
+		_ffmpeg_path = project_ffmpeg_bin
+		return true
+	# 2. ffmpeg.exe trong thư mục project Godot (res://)
+	var project_ffmpeg: String = ProjectSettings.globalize_path("res://ffmpeg.exe")
+	if _try_exec.call(project_ffmpeg):
+		_ffmpeg_path = project_ffmpeg
+		return true
+	# 3. ffmpeg.exe cạnh file game (bundle)
+	var game_dir: String = OS.get_executable_path().get_base_dir()
+	var bundled: String = game_dir.path_join("ffmpeg.exe")
+	if _try_exec.call(bundled):
+		_ffmpeg_path = bundled
+		return true
+	# 4. Đường dẫn từ config
+	if _try_exec.call(_ffmpeg_path):
+		return true
+	# 5. C:\ffmpeg\ffmpeg.exe (thư mục gốc, không có bin)
+	if _try_exec.call("C:\\ffmpeg\\ffmpeg.exe"):
+		_ffmpeg_path = "C:\\ffmpeg\\ffmpeg.exe"
+		return true
+	# 6. ffmpeg trong PATH
 	if OS.execute("ffmpeg", ["-version"], output, true) == 0:
 		_ffmpeg_path = "ffmpeg"
 		return true
-	# Thử đường dẫn từ config
-	if OS.execute(_ffmpeg_path, ["-version"], output, true) == 0:
-		_ffmpeg_path = _ffmpeg_path
-		return true
-	# Thử đường dẫn cứng C:\ffmpeg\bin\ffmpeg.exe
-	if OS.execute("C:\\ffmpeg\\bin\\ffmpeg.exe", ["-version"], output, true) == 0:
+	# 7. Đường dẫn cứng C:\ffmpeg\bin
+	if _try_exec.call("C:\\ffmpeg\\bin\\ffmpeg.exe"):
 		_ffmpeg_path = "C:\\ffmpeg\\bin\\ffmpeg.exe"
 		return true
 	return false
 
 func _start_recording() -> void:
-	if _recording or not _ffmpeg_available:
+	if _recording:
+		return
+
+	# Load lại config (lúc này GameManager đã có config thật)
+	_load_config()
+	# Kiểm tra lại FFmpeg với config mới
+	if not _check_ffmpeg():
+		push_error("[VideoRecorder] ❌ Không thể khởi động FFmpeg!")
+		push_error("[VideoRecorder]    Kiểm tra: %s" % _ffmpeg_path)
 		return
 	
 	# Tạo tên file theo timestamp
 	var timestamp: String = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
-	_output_path = "user://recordings/gameplay_%s.mp4" % timestamp
-	var abs_path: String = ProjectSettings.globalize_path(_output_path)
+	var output_dir: String = "D:\\Tai lieu kenh algodoo\\game-spiral-destruction\\output"
+	DirAccess.make_dir_recursive_absolute(output_dir)
+	_output_path = "%s\\gameplay_%s.mp4" % [output_dir, timestamp]
 	
 	# Lấy tên window game (set từ project.godot: config/name)
 	var window_title: String = ProjectSettings.get_setting("application/config/name", "game-spiral-destruction")
-	
-	# Command: ffmpeg -f gdigrab -framerate 60 -i title="window_title" 
-	#          -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p output.mp4
-	var args: PackedStringArray = [
-		"-f", "gdigrab",
-		"-framerate", "60",
-		"-i", "title=%s" % window_title,
-		"-c:v", "libx264",
-		"-preset", "ultrafast",
-		"-crf", "23",
-		"-pix_fmt", "yuv420p",
-		"-y",
-		abs_path
-	]
-	
-	# Chạy FFmpeg ở chế độ background (không block game)
-	var all_args: PackedStringArray = ["/c", "start", "/B", _ffmpeg_path]
-	all_args.append_array(args)
-	_ffmpeg_pid = OS.execute("cmd", all_args, [], false)
-	
+
+	# Build command — tất cả path có spaces đều phải quote
+	var cmd_line: String = '"%s" -f gdigrab -framerate 60 -i "title=%s" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -y "%s"' % [_ffmpeg_path, window_title, _output_path]
+	print("[VideoRecorder] CMD: %s" % cmd_line)
+	var shell_args: PackedStringArray = ["/c", "start", "/B", "" , cmd_line]
+	_ffmpeg_pid = OS.execute("cmd", shell_args, [], false)
+
 	if _ffmpeg_pid > 0:
 		_recording = true
-		print("[VideoRecorder] ▶️ Ghi hình: %s" % abs_path)
+		print("[VideoRecorder] ▶️ Ghi hình: %s" % _output_path)
 		_update_indicator_visible(true)
 		set_process(true)
 	else:
-		# Fallback: thử trực tiếp
-		_ffmpeg_pid = OS.execute(_ffmpeg_path, args, [], false)
-		if _ffmpeg_pid > 0:
-			_recording = true
-			print("[VideoRecorder] ▶️ Ghi hình: %s" % abs_path)
-			_update_indicator_visible(true)
-			set_process(true)
-		else:
-			push_error("[VideoRecorder] ❌ Không thể khởi động FFmpeg!")
-			push_error("[VideoRecorder]    Kiểm tra: %s" % _ffmpeg_path)
+		push_error("[VideoRecorder] ❌ Không thể khởi động FFmpeg!")
+		push_error("[VideoRecorder]    Kiểm tra: %s" % _ffmpeg_path)
 
 func _stop_recording() -> void:
 	if not _recording:
 		return
 	
-	# Kill FFmpeg bằng tên process (không cần PID)
+	# Kill FFmpeg bằng tên process (vì PID là của cmd.exe, không phải ffmpeg)
 	if DisplayServer.get_name() == "Windows":
 		OS.execute("taskkill", ["/IM", "ffmpeg.exe", "/F"], [], false)
-	else:
-		if _ffmpeg_pid > 0:
-			OS.kill(_ffmpeg_pid)
+	elif _ffmpeg_pid > 0:
+		OS.kill(_ffmpeg_pid)
 	
 	_ffmpeg_pid = -1
 	_recording = false

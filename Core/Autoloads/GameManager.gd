@@ -35,10 +35,16 @@ func _ready() -> void:
 	EventBus.simulation_completed.connect(_on_simulation_completed)
 
 func _input(event: InputEvent) -> void:
-	# Phím R: reset nhanh trong lúc quay video
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.keycode == KEY_R and event.pressed):
-		if current_state == State.RUNNING or current_state == State.COMPLETED:
-			request_reset()
+	if event is InputEventKey and event.pressed:
+		match event.keycode:
+			KEY_SPACE:
+				# Space khi IDLE → bắt đầu game sau delay
+				if current_state == State.IDLE:
+					_start_with_delay()
+			KEY_R:
+				# R khi đang chạy → reset
+				if current_state == State.RUNNING or current_state == State.COMPLETED:
+					request_reset()
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -94,11 +100,19 @@ func get_elapsed_time() -> float:
 		return 0.0
 	return (Time.get_ticks_msec() / 1000.0) - _simulation_start_time
 
-## Áp dụng cấu hình viewport từ config (màu nền, v.v.)
+## Áp dụng cấu hình viewport từ config (màu nền, kích thước, v.v.)
 func _apply_viewport_config(config: Dictionary) -> void:
 	var vp: Dictionary = config.get("viewport", {})
 	var bg_color_str: String = vp.get("background_color", "#000000")
 	RenderingServer.set_default_clear_color(Color(bg_color_str))
+	
+	# Áp dụng resolution từ config
+	var res_arr: Array = vp.get("resolution", [])
+	if res_arr.size() >= 2:
+		var w: int = int(res_arr[0])
+		var h: int = int(res_arr[1])
+		if w > 0 and h > 0:
+			DisplayServer.window_set_size(Vector2i(w, h))
 
 # ── Private ───────────────────────────────────────────────────────────────────
 
@@ -125,18 +139,36 @@ func _load_mode_scene(mode_id: String) -> void:
 	if _current_simulation.has_method("set_config"):
 		_current_simulation.set_config(_current_config)
 	
-	# Gọi setup() rồi start()
+	# Gọi setup() — KHÔNG start(), chờ người dùng nhấn R
 	if _current_simulation.has_method("setup"):
 		_current_simulation.setup()
-	if _current_simulation.has_method("start"):
-		_current_simulation.start()
 
 	_simulation_start_time = Time.get_ticks_msec() / 1000.0
-	_set_state(State.RUNNING)
-	EventBus.simulation_started.emit(mode_id)
+	_set_state(State.IDLE)
+	EventBus.simulation_ready.emit(mode_id)
 
 func _on_simulation_completed(mode_id: String, duration: float) -> void:
 	_set_state(State.COMPLETED)
 
 func _set_state(new_state: State) -> void:
 	current_state = new_state
+
+## Bắt đầu game sau delay (gọi khi nhấn R ở trạng thái IDLE)
+func _start_with_delay() -> void:
+	if _current_simulation == null:
+		return
+	# Đọc start_delay từ config
+	var auto_test_cfg: Dictionary = _current_config.get("auto_test", {})
+	var trans_cfg: Dictionary = auto_test_cfg.get("transition", {})
+	var delay: float = trans_cfg.get("start_delay", 0.5)
+	
+	# Dùng tween để delay rồi start
+	var start_tween: Tween = create_tween()
+	start_tween.tween_interval(delay)
+	start_tween.tween_callback(func():
+		if _current_simulation.has_method("start"):
+			_current_simulation.start()
+		_simulation_start_time = Time.get_ticks_msec() / 1000.0
+		_set_state(State.RUNNING)
+		EventBus.simulation_started.emit(current_mode_id)
+	)

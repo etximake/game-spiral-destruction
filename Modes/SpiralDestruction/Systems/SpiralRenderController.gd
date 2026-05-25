@@ -155,8 +155,9 @@ func _process_regrow_anim(delta: float) -> void:
 ## Gọi một lần trong SpiralMode.setup().
 func setup(map_controller: Node) -> void:
 	_map_controller_ref = map_controller
-	_setup_spiral_line(map_controller.spiral_points)
+	# Triangles trước → ở dưới, Spiral line sau → ở trên
 	_setup_multimesh(map_controller.triangles)
+	_setup_spiral_line(map_controller.spiral_points)
 
 ## Kích hoạt regrow animation cho các tam giác đã bị phá hủy.
 ## Chỉ những triangle trong destroyed_ids mới animate — các triangle còn sống giữ nguyên.
@@ -398,9 +399,19 @@ func _setup_spiral_line(spiral_points: PackedVector2Array) -> void:
 	_spiral_line.width = _spiral_line_width
 	_spiral_line.default_color = _spiral_line_color
 	_spiral_line.antialiased = true
+	
+	# Tạo rainbow gradient cho spiral line — đồng bộ màu với triangles
+	var hue_start: float = _tri_cfg.get("color_hue_start", 0.8)
+	var hue_range: float = _tri_cfg.get("color_hue_range", 1.0)
+	var gradient: Gradient = Gradient.new()
+	var num_stops: int = 12
+	for i: int in num_stops:
+		var t: float = float(i) / float(num_stops - 1)
+		var hue: float = fmod(hue_start + t * hue_range, 1.0)
+		var c: Color = Color.from_hsv(hue, 1.0, 1.0, 0.8)
+		gradient.add_point(t, c)
+	_spiral_line.gradient = gradient
 	add_child(_spiral_line)
-	# Đặt spiral line phía sau multimesh
-	move_child(_spiral_line, 0)
 
 ## Helper: chuyển mảng màu thành Color
 static func _arr_to_color(arr: Array, default_color: Color) -> Color:

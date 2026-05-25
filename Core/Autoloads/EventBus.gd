@@ -5,11 +5,17 @@
 extends Node
 
 # ── Simulation lifecycle ──────────────────────────────────────────────────────
+## Phát khi simulation mode đã setup xong, sẵn sàng chờ R (press to start)
+signal simulation_ready(mode_id: String)
+
 ## Phát khi một simulation mode bắt đầu chạy
 signal simulation_started(mode_id: String)
 
 ## Phát khi simulation kết thúc (win condition đạt được)
 signal simulation_completed(mode_id: String, duration: float)
+
+## Phát khi ball bị kẹt (STUCK) — fail
+signal simulation_stuck(mode_id: String, radius: float)
 
 ## Phát khi reset về trạng thái ban đầu
 signal simulation_reset()

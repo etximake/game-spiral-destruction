@@ -277,6 +277,7 @@ func _generate_triangles() -> Array[Dictionary]:
 		result.append({
 			"pos": pos,
 			"base_pos": base_pos,
+			"collision_pos": pos,  # Tâm collision tại vị trí visual (trong kênh)
 			"angle": angle,
 			"size": size,
 			"color": color,

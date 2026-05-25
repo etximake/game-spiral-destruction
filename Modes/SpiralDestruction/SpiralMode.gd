@@ -55,6 +55,8 @@ func set_config(config: Dictionary) -> void:
 	_auto_test_cfg = config.get("auto_test", {})
 	_win_effect_cfg = config.get("win_effect", {})
 	
+	_auto_test_enabled = _auto_test_cfg.get("enabled", true)
+	
 	var test_list: Array = _auto_test_cfg.get("tests", [])
 	_test_radii.clear()
 	_test_speeds.clear()
@@ -143,12 +145,28 @@ func setup() -> void:
 	
 	render_controller.play_spawn_animation()
 
+	# Ẩn ball lúc đầu — chỉ hiện khi nhấn R và start()
+	ball.modulate.a = 0.0
+	if ball.has_node("Trail"):
+		ball.get_node("Trail").modulate.a = 0.0
+	
+	# Tạo vạch spawn trong world space (luôn khớp với vị trí ball)
+	_create_spawn_line()
+
 	_bounce_count = 0
 	_min_dist_to_center = INF
 	_no_progress_timer = 0.0
 	_is_transitioning = false
 
 func start() -> void:
+	# Đặt ball tại spawn line + hiện lại
+	_place_ball_at_spawn()
+	ball.modulate.a = 1.0
+	if ball.has_node("Trail"):
+		ball.get_node("Trail").modulate.a = 1.0
+		if ball.has_method("reset_trail"):
+			ball.call("reset_trail")
+	
 	_is_running = true
 	ball.set("active", true)
 
@@ -205,6 +223,11 @@ func on_completed() -> void:
 	ball.set("active", false)
 	if _emoji_label:
 		_emoji_label.visible = false
+	
+	# Phát âm thanh win NGAY LẬP TỨC — cùng lúc với animation
+	var audio_mgr: Node = get_node_or_null("/root/GameScene/AudioManager")
+	if audio_mgr and audio_mgr.has_method("play_win"):
+		audio_mgr.play_win()
 
 	if DisplayServer.get_name() == "headless":
 		if _auto_test_enabled:
@@ -245,7 +268,13 @@ func on_completed() -> void:
 		else:
 			var scene_fade: Tween = create_tween()
 			scene_fade.tween_property(self, "modulate:a", 0.0, 1.5)
-			scene_fade.tween_callback(_emit_completed)
+			scene_fade.tween_callback(func():
+				_emit_completed()
+				# Delay 0.5s để âm thanh win kịp phát rồi thoát
+				var quit_tween: Tween = create_tween()
+				quit_tween.tween_interval(0.5)
+				quit_tween.tween_callback(func(): get_tree().quit())
+			)
 
 	explosion.play_effect(map_controller.spiral_points, callback)
 
@@ -279,17 +308,22 @@ func _place_ball_at_spawn() -> void:
 	for p in map_controller.spiral_points:
 		if p.y < min_y:
 			min_y = p.y
-			
-	# 2. Điểm xuất phát: X ngang với miệng (spawn_point.x + 20), Y ngang với đỉnh (min_y)
+	
+	# 2. Đọc offset từ config
+	var ball_cfg: Dictionary = _config.get("ball", {})
+	var spawn_offset: float = ball_cfg.get("spawn_offset", 20.0)
+	var spawn_target_offset: float = ball_cfg.get("spawn_target_offset", 40.0)
+	
+	# 3. Điểm xuất phát: X ngang với miệng + offset, Y ngang với đỉnh (min_y)
 	var spawn_point: Vector2 = map_controller.spiral_points[0]
-	ball.global_position = Vector2(spawn_point.x + 20.0, min_y)
+	ball.global_position = Vector2(spawn_point.x + spawn_offset, min_y)
 
 	# Reset trail to new spawn position immediately to avoid misalignment
 	if ball.has_method("reset_trail"):
 		ball.call("reset_trail")
 
-	# 3. Hướng ban đầu: hướng từ điểm spawn vào tâm miệng của spiral (spawn_point.x - 40, spawn_point.y)
-	var target_mouth: Vector2 = Vector2(spawn_point.x - 40.0, spawn_point.y)
+	# 4. Hướng ban đầu: hướng từ điểm spawn vào tâm miệng của spiral
+	var target_mouth: Vector2 = Vector2(spawn_point.x - spawn_target_offset, spawn_point.y)
 	var initial_dir: Vector2 = (target_mouth - ball.global_position).normalized()
 	var current_speed: float = ball.get("ball_speed")
 	ball.set("velocity", initial_dir * current_speed)
@@ -312,11 +346,14 @@ func _transition_to_next_test(stuck: bool) -> void:
 
 	var current_radius: float = _test_radii[_current_test_index] if _current_test_index < _test_radii.size() else 0.0
 	
+	# 1. Play fail sound NGAY LẬP TỨC
 	if stuck:
-		print("[AUTO-TEST] ❌ STUCK! Radius %.1f bị kẹt — không đến được emoji trong %.1fs" % [current_radius, _test_timer])
+		var am: Node = get_node_or_null("/root/GameScene/AudioManager")
+		if am and am.has_method("play_fail"):
+			am.play_fail()
 	else:
+		# WIN — kết thúc ngay
 		print("[AUTO-TEST] ✅ WIN! Radius %.1f đã chạm emoji! (%.1fs)" % [current_radius, _test_timer])
-		# WIN → kết thúc ngay, không chạy test tiếp theo
 		print("[AUTO-TEST] ══════════════════════════════════════")
 		print("[AUTO-TEST] 🏆 Chiến thắng! Ball radius %.1f đã đến được emoji!" % current_radius)
 		print("[AUTO-TEST] Radii tested: %s" % str(_test_radii))
@@ -324,11 +361,12 @@ func _transition_to_next_test(stuck: bool) -> void:
 		_auto_test_enabled = false
 		_emit_completed()
 		_is_transitioning = false
-		if DisplayServer.get_name() == "headless":
-			get_tree().quit()
+		var quit_tween: Tween = create_tween()
+		quit_tween.tween_interval(0.5)
+		quit_tween.tween_callback(func(): get_tree().quit())
 		return
-
-	# 1. Ball dừng, flash nhấp nháy (dùng tween nhấp nháy alpha)
+	
+	# 2. Flash nhấp nháy
 	var trans_cfg: Dictionary = _auto_test_cfg.get("transition", {})
 	var flash_dur: float = trans_cfg.get("flash_duration", 0.08)
 	var flash_count: int = trans_cfg.get("flash_count", 4)
@@ -338,62 +376,96 @@ func _transition_to_next_test(stuck: bool) -> void:
 		flash_tween.tween_property(ball, "modulate:a", 0.2, flash_dur)
 		flash_tween.tween_property(ball, "modulate:a", 1.0, flash_dur)
 	
+	# 3. Sau flash → delay 0.2s → reset/regrow → next test
 	flash_tween.tween_callback(func():
 		_current_test_index += 1
 
-		# 2. Reset tất cả tam giác — chỉ regrow những cái đã bị phá
-		var regrow_ids: Array[int] = _destroyed_ids.duplicate()
-		_destroyed_ids.clear()
-		map_controller.restore_all()
-		if not regrow_ids.is_empty():
-			render_controller.play_regrow_animation(regrow_ids)
-		else:
-			render_controller.play_spawn_animation()
-		map_controller._build_spatial_grid()
-
-		_destroyed_count = 0
-		_glow_time = 0.0
-		_test_timer = 0.0
-		_bounce_count = 0
-		_min_dist_to_center = INF
-		_no_progress_timer = 0.0
-		
-		_event_bus.hud_update_requested.emit("destroyed", 0)
-
-		if _current_test_index >= _test_radii.size():
-			print("[AUTO-TEST] ══════════════════════════════════════")
-			print("[AUTO-TEST] Hoàn thành tất cả %d ngưỡng!" % _test_radii.size())
-			print("[AUTO-TEST] Radii tested: %s" % str(_test_radii))
-			print("[AUTO-TEST] ══════════════════════════════════════")
-			_auto_test_enabled = false
-			_emit_completed()
-			_is_transitioning = false
-			if DisplayServer.get_name() == "headless":
-				get_tree().quit()
-			return
-
-		# 3. Ball mới xuất hiện ở miệng (nhỏ hơn lần trước)
-		var new_radius: float = _test_radii[_current_test_index]
-		var new_speed: float = _test_speeds[_current_test_index]
-		ball.call("reset")
-		ball.set("radius", new_radius)
-		ball.set("ball_speed", new_speed)
-		ball.set("shrink_enabled", false)
-		_place_ball_at_spawn()
-
-		_event_bus.ball_radius_changed.emit(new_radius)
-
-		# 4. Delay Ns -> bắt đầu lần mới
-		var delay_sec: float = _auto_test_cfg.get("transition", {}).get("post_delay", 0.5)
+		# Delay ngắn trước khi reset
+		var delay_sec: float = trans_cfg.get("post_delay", 0.2)
 		var delay_tween: Tween = create_tween()
 		delay_tween.tween_interval(delay_sec)
 		delay_tween.tween_callback(func():
+			# Reset tất cả tam giác
+			var regrow_ids: Array[int] = _destroyed_ids.duplicate()
+			_destroyed_ids.clear()
+			map_controller.restore_all()
+			if not regrow_ids.is_empty():
+				render_controller.play_regrow_animation(regrow_ids)
+			else:
+				render_controller.play_spawn_animation()
+			map_controller._build_spatial_grid()
+
+			_destroyed_count = 0
+			_glow_time = 0.0
+			_test_timer = 0.0
+			_bounce_count = 0
+			_min_dist_to_center = INF
+			_no_progress_timer = 0.0
+			
+			_event_bus.hud_update_requested.emit("destroyed", 0)
+
+			if _current_test_index >= _test_radii.size():
+				print("[AUTO-TEST] ══════════════════════════════════════")
+				print("[AUTO-TEST] Hoàn thành tất cả %d ngưỡng!" % _test_radii.size())
+				print("[AUTO-TEST] Radii tested: %s" % str(_test_radii))
+				print("[AUTO-TEST] ══════════════════════════════════════")
+				_auto_test_enabled = false
+				_emit_completed()
+				_is_transitioning = false
+				if DisplayServer.get_name() == "headless":
+					get_tree().quit()
+				return
+
+			# Ball mới xuất hiện ở miệng
+			var new_radius: float = _test_radii[_current_test_index]
+			var new_speed: float = _test_speeds[_current_test_index]
+			ball.call("reset")
+			ball.set("radius", new_radius)
+			ball.set("ball_speed", new_speed)
+			ball.set("shrink_enabled", false)
+			_place_ball_at_spawn()
+
+			_event_bus.ball_radius_changed.emit(new_radius)
+
+			# Bắt đầu test mới ngay
 			_is_running = true
 			_is_transitioning = false
 			ball.set("active", true)
 			print("[AUTO-TEST] ── Chuyển sang test #%d — Ball radius: %.1f px, speed: %.1f px/s ──" % [_current_test_index + 1, new_radius, new_speed])
 		)
 	)
+
+# ── Spawn Line (world space) ─────────────────────────────────────────────────
+
+var _spawn_line_node: Line2D = null
+
+func _create_spawn_line() -> void:
+	_remove_spawn_line()
+	_spawn_line_node = Line2D.new()
+	
+	# Đọc config
+	var hud_cfg: Dictionary = _config.get("hud", {})
+	var line_cfg: Dictionary = hud_cfg.get("spawn_line", {})
+	var length: float = line_cfg.get("length", 50.0)
+	
+	# Vị trí world: lấy từ global_position của ball (đã được _place_ball_at_spawn đặt)
+	var ball_pos: Vector2 = ball.global_position
+	var half: float = length * 0.5
+	_spawn_line_node.points = PackedVector2Array([
+		Vector2(ball_pos.x - half, ball_pos.y),
+		Vector2(ball_pos.x + half, ball_pos.y)
+	])
+	_spawn_line_node.width = 2.0
+	_spawn_line_node.default_color = Color.WHITE
+	_spawn_line_node.antialiased = true
+	_spawn_line_node.z_index = 3
+	_spawn_line_node.z_as_relative = false
+	add_child(_spawn_line_node)
+
+func _remove_spawn_line() -> void:
+	if is_instance_valid(_spawn_line_node):
+		_spawn_line_node.queue_free()
+		_spawn_line_node = null
 
 # ── Emoji mặt cười ở cuối spiral ──────────────────────────────────────────────
 

@@ -15,6 +15,18 @@ func set_ball_config(ball_cfg: Dictionary, spiral_cfg: Dictionary) -> void:
 		visual.modulate = BALL_COLOR
 	if trail != null:
 		_update_trail_color()
+	if glow != null and GLOW_ENABLED:
+		_setup_glow()
+	
+	# Quan trọng: resize trail buffers theo config (ready() dùng fallback)
+	var new_len: int = TRAIL_LENGTH
+	if _trail_buffer.size() != new_len:
+		_trail_buffer.resize(new_len)
+		_trail_ordered.resize(new_len)
+		# Reset buffer về vị trí hiện tại
+		for i: int in new_len:
+			_trail_buffer[i] = global_position
+		_trail_index = 0
 
 # ── Config-driven getters (fallback về hardcode) ──────────────────────────────
 var BALL_SPEED: float: get = _get_ball_speed
@@ -50,6 +62,54 @@ func _get_ball_color() -> Color:
 		return Color(arr[0], arr[1], arr[2])
 	return Color.WHITE
 
+var VISUAL_SEGMENTS: int: get = _get_visual_segments
+func _get_visual_segments() -> int: return _ball_cfg.get("visual_segments", 16)
+
+var SPEED_ESC_MIN: float: get = _get_speed_esc_min
+func _get_speed_esc_min() -> float:
+	var esc: Dictionary = _ball_cfg.get("speed_escalation", {})
+	return esc.get("min_multiplier", 1.5)
+
+var SPEED_ESC_MAX: float: get = _get_speed_esc_max
+func _get_speed_esc_max() -> float:
+	var esc: Dictionary = _ball_cfg.get("speed_escalation", {})
+	return esc.get("max_multiplier", 4.0)
+
+var GLOW_ENABLED: bool: get = _get_glow_enabled
+func _get_glow_enabled() -> bool:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	return glow_cfg.get("enabled", true)
+
+var GLOW_RADIUS_MULT: float: get = _get_glow_radius_mult
+func _get_glow_radius_mult() -> float:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	return glow_cfg.get("radius_multiplier", 1.8)
+
+var GLOW_COLOR: Color: get = _get_glow_color
+func _get_glow_color() -> Color:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	var arr: Array = glow_cfg.get("color", [1.0, 0.3, 0.1])
+	if arr.size() >= 3:
+		if arr[0] > 1.0 or arr[1] > 1.0 or arr[2] > 1.0:
+			return Color(arr[0]/255.0, arr[1]/255.0, arr[2]/255.0)
+		return Color(arr[0], arr[1], arr[2])
+	return Color(1.0, 0.3, 0.1)
+
+var GLOW_ALPHA: float: get = _get_glow_alpha
+func _get_glow_alpha() -> float:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	return glow_cfg.get("alpha", 0.3)
+
+var GLOW_PULSE_SPEED: float: get = _get_glow_pulse_speed
+func _get_glow_pulse_speed() -> float:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	return glow_cfg.get("pulse_speed", 2.0)
+
+var GLOW_PULSE_AMP: float: get = _get_glow_pulse_amp
+func _get_glow_pulse_amp() -> float:
+	var glow_cfg: Dictionary = _ball_cfg.get("glow", {})
+	return glow_cfg.get("pulse_amplitude", 0.15)
+
 # ── State ─────────────────────────────────────────────────────────────────────
 var velocity: Vector2 = Vector2.ZERO     # Vector vận tốc hiện tại
 var radius: float = INITIAL_RADIUS:      # Bán kính hiện tại
@@ -68,6 +128,7 @@ var ball_speed: float = BALL_SPEED       # Tốc độ di chuyển hiện tại
 # ── Node references ───────────────────────────────────────────────────────────
 @onready var visual: MeshInstance2D = $BallVisual
 @onready var trail: Line2D = $Trail
+@onready var glow: MeshInstance2D = $BallGlow
 
 ## Reference đến SpiralMapController — gán từ SpiralMode sau khi setup
 var map_controller: Node = null
@@ -99,6 +160,10 @@ func _ready() -> void:
 	# Setup visual mesh (hình tròn xấp xỉ bằng polygon)
 	_setup_visual()
 
+	# Setup glow halo
+	if GLOW_ENABLED:
+		_setup_glow()
+
 	# Setup trail gradient
 	_setup_trail()
 
@@ -108,6 +173,9 @@ func _ready() -> void:
 	# Đảm bảo ball vẽ đè lên emoji
 	z_index = 2
 	z_as_relative = false
+
+	# Enable glow pulse processing
+	set_process(GLOW_ENABLED)
 
 func _physics_process(delta: float) -> void:
 	if not active or _win_triggered:
@@ -125,8 +193,9 @@ func _physics_process(delta: float) -> void:
 	var total_points: int = map_controller.SPIRAL_TURNS * map_controller.SPIRAL_POINTS_PER_TURN
 	var progress: float = clamp(float(segment_idx) / float(total_points - 1), 0.0, 1.0)
 	
-	# Gia tốc tuyến tính: tăng dần từ 1.0x ở đầu xoắn đến 2.2x ở cuối xoắn
-	_current_active_speed = ball_speed * (1.0 + 1.2 * progress)
+	# Gia tốc tuyến tính: tăng dần từ SPEED_ESC_MIN ở đầu xoắn đến SPEED_ESC_MAX ở cuối xoắn
+	var speed_range: float = SPEED_ESC_MAX - SPEED_ESC_MIN
+	_current_active_speed = ball_speed * (SPEED_ESC_MIN + speed_range * progress)
 	if velocity.length_squared() > 0.0001:
 		velocity = velocity.normalized() * _current_active_speed
 
@@ -178,6 +247,11 @@ func reset() -> void:
 	visual.scale = Vector2.ONE
 	_event_bus.ball_radius_changed.emit(radius)
 
+	# Reset glow
+	if GLOW_ENABLED and is_instance_valid(glow):
+		_glow_time = 0.0
+		glow.modulate = Color(GLOW_COLOR.r, GLOW_COLOR.g, GLOW_COLOR.b, GLOW_ALPHA)
+
 ## Reset lại hoàn toàn trail tại vị trí hiện tại
 func reset_trail() -> void:
 	for i: int in TRAIL_LENGTH:
@@ -220,13 +294,12 @@ func _check_triangle_collisions() -> bool:
 		if not tri["alive"]:
 			continue
 
-		var dist: float = global_position.distance_to(tri["pos"])
+		var dist: float = global_position.distance_to(tri["collision_pos"])
 		var combined_radius: float = radius + tri["collision_radius"]
 
 		if dist < combined_radius:
-			# Kiểm tra xem có tường chắn giữa Ball và tâm Tam giác hay không
-			# để tránh việc bóng ăn gạch xuyên qua tường ở vòng bên cạnh
-			var wall_blocked: Dictionary = _find_wall_intersection(global_position, tri["pos"])
+			# Kiểm tra xem có tường chắn giữa Ball và tâm collider của Tam giác hay không
+			var wall_blocked: Dictionary = _find_wall_intersection(global_position, tri["collision_pos"])
 			if wall_blocked["intersects"]:
 				continue
 
@@ -397,10 +470,12 @@ func _trigger_win() -> void:
 # ── Trail ─────────────────────────────────────────────────────────────────────
 
 func _update_trail_color() -> void:
-	var ball_color: Color = BALL_COLOR
+	# Trail gradient: từ cam rực → đỏ cam (warm fire gradient)
 	var gradient: Gradient = Gradient.new()
-	gradient.add_point(0.0, Color(ball_color.r, ball_color.g, ball_color.b, 0.0))
-	gradient.add_point(1.0, Color(ball_color.r, ball_color.g, ball_color.b, 0.8))
+	gradient.add_point(0.0, Color(0.0, 0.0, 0.0, 0.0))
+	gradient.add_point(0.3, Color(1.0, 0.4, 0.05, 0.1))
+	gradient.add_point(0.6, Color(1.0, 0.2, 0.05, 0.4))
+	gradient.add_point(1.0, Color(1.0, 0.1, 0.02, 0.8))
 	trail.gradient = gradient
 
 func _update_trail() -> void:
@@ -421,7 +496,7 @@ func _setup_visual() -> void:
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 
-	var segments: int = 16
+	var segments: int = VISUAL_SEGMENTS
 	var verts: PackedVector2Array = PackedVector2Array()
 	var indices: PackedInt32Array = PackedInt32Array()
 
@@ -459,5 +534,49 @@ func _setup_trail() -> void:
 	curve.add_point(Vector2(1.0, 1.0))
 	trail.width_curve = curve
 
+	# Cập nhật gradient trail ngay sau khi setup
 	_update_trail_color()
 
+# ── Glow Halo ─────────────────────────────────────────────────────────────────
+
+func _setup_glow() -> void:
+	# Tạo glow halo: hình tròn lớn hơn, bán trong suốt, đặt phía sau ball
+	var glow_mesh: ArrayMesh = ArrayMesh.new()
+	var glow_arrays: Array = []
+	glow_arrays.resize(Mesh.ARRAY_MAX)
+
+	var segments: int = 24
+	var verts: PackedVector2Array = PackedVector2Array()
+	var indices: PackedInt32Array = PackedInt32Array()
+
+	verts.append(Vector2.ZERO)
+	for i: int in segments:
+		var angle: float = (float(i) / float(segments)) * TAU
+		verts.append(Vector2(cos(angle), sin(angle)) * INITIAL_RADIUS * GLOW_RADIUS_MULT)
+
+	for i: int in segments:
+		indices.append(0)
+		indices.append(i + 1)
+		indices.append((i + 1) % segments + 1)
+
+	glow_arrays[Mesh.ARRAY_VERTEX] = verts
+	glow_arrays[Mesh.ARRAY_INDEX] = indices
+	glow_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, glow_arrays)
+
+	glow.mesh = glow_mesh
+	glow.modulate = Color(GLOW_COLOR.r, GLOW_COLOR.g, GLOW_COLOR.b, GLOW_ALPHA)
+	glow.z_index = -1  # Phía sau ball visual
+	glow.z_as_relative = false
+
+	# Pulse animation
+	_glow_time = 0.0
+
+var _glow_time: float = 0.0
+
+func _process(delta: float) -> void:
+	if not active or not GLOW_ENABLED:
+		return
+	_glow_time += delta
+	# Pulse: dao động alpha theo sin
+	var pulse: float = 1.0 + sin(_glow_time * GLOW_PULSE_SPEED) * GLOW_PULSE_AMP
+	glow.modulate = Color(GLOW_COLOR.r, GLOW_COLOR.g, GLOW_COLOR.b, GLOW_ALPHA * pulse)

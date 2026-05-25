@@ -20,6 +20,8 @@ script = ExtResource("4_ball")
 
 [node name="BallVisual" type="MeshInstance2D" parent="Ball"]
 
+[node name="BallGlow" type="MeshInstance2D" parent="Ball"]
+
 [node name="Trail" type="Line2D" parent="Ball"]
 width = 8.0
 

@@ -22,11 +22,11 @@ var _hud_title_color: Color = Color.WHITE
 var _hud_title_outline_color: Color = Color(0.0, 0.0, 0.0, 0.8)
 var _hud_title_outline_size: int = 4
 var _hud_info_font_size: int = 28
-var _meter_pos: Vector2 = Vector2(1030, 200)
-var _meter_size: Vector2 = Vector2(24, 300)
-var _meter_radius_min: float = 15.0
-var _meter_radius_max: float = 62.0
-var _meter_border_width: int = 3
+
+# Spawn line (thay thế size_meter)
+var _spawn_line_pos: Vector2 = Vector2(1060, 960)
+var _spawn_line_length: float = 60.0
+var _spawn_line_color: Color = Color.WHITE
 
 # ── Autoload shortcut ─────────────────────────────────────────────────────────
 @onready var _event_bus: Node = get_node("/root/EventBus")
@@ -45,34 +45,8 @@ func _process(delta: float) -> void:
 	_elapsed_time += delta
 
 func _draw() -> void:
-	# Vẽ thanh đo kích thước bóng (cấu hình từ hud.size_meter)
-	var bar_pos: Vector2 = _meter_pos
-	var bar_size: Vector2 = _meter_size
-	
-	# Vẽ viền ngoài của thanh đo
-	draw_rect(Rect2(bar_pos, bar_size), Color(0.2, 0.2, 0.2, 0.8), false, float(_meter_border_width))
-	
-	# Tính tỷ lệ phần trăm bán kính bóng
-	var r_min: float = _meter_radius_min
-	var r_range: float = _meter_radius_max - r_min
-	var t: float = clamp((_current_radius - r_min) / r_range, 0.0, 1.0)
-	var fill_height: float = t * bar_size.y
-	
-	# Màu chuyển từ xanh lá -> vàng -> đỏ tùy theo kích thước
-	var fill_color: Color = Color.GREEN
-	if t > 0.6:
-		fill_color = Color.RED
-	elif t > 0.25:
-		fill_color = Color.YELLOW
-		
-	# Vẽ vạch đầy (từ dưới lên)
-	var fill_rect: Rect2 = Rect2(
-		bar_pos.x + 3.0, 
-		bar_pos.y + bar_size.y - fill_height + 3.0, 
-		bar_size.x - 6.0, 
-		max(0.0, fill_height - 6.0)
-	)
-	draw_rect(fill_rect, fill_color, true)
+	# Không vẽ gì — spawn_line đã chuyển sang world space trong SpiralMode
+	pass
 
 # ── Signal handlers ───────────────────────────────────────────────────────────
 
@@ -198,13 +172,9 @@ func _load_hud_config() -> void:
 	_hud_title_outline_size = hud_cfg.get("title_outline_size", _hud_title_outline_size)
 	
 	var meter: Dictionary = hud_cfg.get("size_meter", {})
-	var pos_arr: Array = meter.get("position", [1030, 200])
-	_meter_pos = Vector2(pos_arr[0], pos_arr[1])
-	var size_arr: Array = meter.get("size", [24, 300])
-	_meter_size = Vector2(size_arr[0], size_arr[1])
-	_meter_radius_min = meter.get("radius_min", _meter_radius_min)
-	_meter_radius_max = meter.get("radius_max", _meter_radius_max)
-	_meter_border_width = meter.get("border_width", _meter_border_width)
+	
+	# Spawn line config (dự phòng, không cần đọc nữa — world space)
+	var line_cfg: Dictionary = hud_cfg.get("spawn_line", {})
 	
 	# Apply config vào labels đã tạo
 	_label_title.text = _hud_title

@@ -34,6 +34,8 @@ var _time_since_last_bounce: float = 0.0
 
 var bounce_stream: AudioStream = null
 var brick_stream: AudioStream = null
+var fail_stream: AudioStream = null
+var win_stream: AudioStream = null
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -55,25 +57,55 @@ func _on_ball_bounced(_position: Vector2, _normal: Vector2) -> void:
 	_play_sound(bounce_stream, _current_pitch)
 
 func _on_brick_destroyed(_brick_id: int, _world_position: Vector2, _color: Color) -> void:
+	# Phát dry-fart.mp3 khi ball chạm triangle
 	var random_pitch: float = _current_pitch + randf_range(-_pitch_variation, _pitch_variation)
 	_play_sound(brick_stream, random_pitch)
 
+# ── Public API ────────────────────────────────────────────────────────────────
+
+## Gọi trực tiếp từ SpiralMode — phát âm thanh fail NGAY KHI bị kẹt
+func play_fail() -> void:
+	_play_sound(fail_stream, 1.0, 3.0)  # +3dB cho fail
+
+## Gọi trực tiếp từ SpiralMode — phát âm thanh win NGAY KHI thắng
+func play_win() -> void:
+	_play_sound(win_stream, 1.0)
+
 # ── Private ───────────────────────────────────────────────────────────────────
 
-func _play_sound(stream: AudioStream, pitch: float) -> void:
+func _play_sound(stream: AudioStream, pitch: float, volume_boost: float = 0.0) -> void:
 	if stream == null:
 		return
 	var player: AudioStreamPlayer = _object_pool.get_audio_player()
+	player.stop()  # Dừng âm thanh trước đó nếu có
 	player.stream = stream
 	player.pitch_scale = clamp(pitch, _pitch_min, _pitch_max)
+	player.volume_db = volume_boost  # Tăng volume nếu cần
 	player.play()
 
 func _try_load_audio() -> void:
-	# Load audio nếu file tồn tại
-	var bounce_path: String = "res://Assets/Audio/bounce.wav"
-	var brick_path: String = "res://Assets/Audio/brick_break.wav"
+	# Đọc đường dẫn audio từ config
+	var gm = get_node_or_null("/root/GameManager")
+	var bounce_path: String = "res://Audio/bounce.wav"
+	var brick_path: String = "res://Audio/dry-fart.mp3"
+	var fail_path: String = "res://Audio/error-notification.mp3"
+	var win_path: String = "res://Audio/check-mark_oPG7Xo5.mp3"
+	if gm and gm.has_method("get_current_config"):
+		var cfg: Dictionary = gm.get_current_config()
+		var ac: Dictionary = cfg.get("audio", {})
+		bounce_path = ac.get("bounce_sound_path", bounce_path)
+		brick_path = ac.get("brick_sound_path", brick_path)
+		fail_path = ac.get("fail_sound_path", fail_path)
+		win_path = ac.get("win_sound_path", win_path)
 
-	if ResourceLoader.exists(bounce_path):
-		bounce_stream = load(bounce_path)
-	if ResourceLoader.exists(brick_path):
-		brick_stream = load(brick_path)
+	bounce_stream = _load_or_generate(bounce_path, 800, 0.08)
+	brick_stream = _load_or_generate(brick_path, 600, 0.1)
+	fail_stream = _load_or_generate(fail_path, 400, 0.3)
+	win_stream = _load_or_generate(win_path, 1000, 0.5)
+
+## Tải file audio. Trả về null nếu file không tồn tại (không tạo placeholder)
+func _load_or_generate(path: String, _freq: float, _duration: float) -> AudioStream:
+	if ResourceLoader.exists(path):
+		return load(path)
+	print('[AudioManager] ⚠️ Không tìm thấy "%s" — bỏ qua' % path)
+	return null

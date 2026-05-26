@@ -1,47 +1,56 @@
 ## VideoRecorder.gd
-## Quay màn hình game qua OBS WebSocket.
+## Quay màn hình game qua FFmpeg.
 ## Tự động bắt đầu/dừng recording theo lifecycle simulation.
 ## Cấu hình: đặt trong config.json → "recording" section.
-##
-## OBS WebSocket 5.x Protocol:
-##   op 0: Hello (server → client)
-##   op 1: Identify (client → server)
-##   op 2: Identified (server → client)
-##   op 6: Request (client → server)
-##   op 7: RequestResponse (server → client)
-##   op 9: IdentifyFailed (server → client)
 extends Node
 
 # ── Config (từ GameManager) ───────────────────────────────────────────────────
 var _enabled: bool = false
-var _host: String = "127.0.0.1"
-var _port: int = 4455
-var _password: String = "12345678"
-var _connect_timeout: float = 4.0
-var _request_timeout: float = 4.0
+var _record_audio: bool = true
+var _ffmpeg_path: String = "res://ffmpeg/bin/ffmpeg.exe"
+var _output_path: String = "res://recordings/spiral_destruction.mp4"
+var _fps: int = 60
+var _scale_factor: float = 1.0
+var _preset: String = "ultrafast"
+var _crf: int = 23
 var _auto_start: bool = true
 var _auto_stop: bool = true
 var _verbose: bool = true
 
-# ── OBS WebSocket State ───────────────────────────────────────────────────────
-var _socket: WebSocketPeer = WebSocketPeer.new()
-var _identified: bool = false
-var _identify_sent: bool = false
-var _pending_responses: Dictionary = {}
-var _next_request_id: int = 1
+var _viewport_w: int = 1080
+var _viewport_h: int = 1920
+
+# ── FFmpeg & Audio State ──────────────────────────────────────────────────────
+var _ffmpeg_pid: int = 0
+var _ffmpeg_pipe: FileAccess = null
 var _last_error: String = ""
 var _is_recording: bool = false
+var _record_effect: AudioEffectRecord = null
+
+# Đường dẫn tạm thời
+var _current_temp_video: String = ""
+var _current_temp_audio: String = ""
+var _current_final_output: String = ""
+
+# ── Multithread Queue ─────────────────────────────────────────────────────────
+var _thread: Thread = Thread.new()
+var _thread_active: bool = false
+var _frame_queue: Array[Image] = []
+var _queue_mutex: Mutex = Mutex.new()
+var _queue_semaphore: Semaphore = Semaphore.new()
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
-	# Config chưa sẵn sàng ở _ready() (GameScene chưa load mode).
-	# Đợi simulation_ready để load config rồi mới kết nối OBS.
+	# Cấu hình ghi âm Master Bus
+	_setup_audio_recording()
+
 	var bus = get_node_or_null("/root/EventBus")
 	if bus:
 		bus.simulation_ready.connect(_on_simulation_ready)
 		if _auto_stop:
 			bus.simulation_completed.connect(_on_simulation_completed)
 			bus.simulation_stuck.connect(_on_simulation_stuck)
+			bus.simulation_reset.connect(_on_simulation_reset)
 
 func _on_simulation_ready(_mode_id: String) -> void:
 	_load_config()
@@ -49,72 +58,206 @@ func _on_simulation_ready(_mode_id: String) -> void:
 		_log("VideoRecorder disabled in config")
 		return
 
-	# Kết nối tới OBS WebSocket
-	_connect_obs()
-
-	# Lắng nghe Space để bắt đầu recording (chỉ 1 lần)
+	# Lắng nghe Signal bắt đầu recording
 	var bus = get_node_or_null("/root/EventBus")
 	if bus and _auto_start and not bus.simulation_start_requested.is_connected(_on_simulation_start_requested):
 		bus.simulation_start_requested.connect(_on_simulation_start_requested)
 
 func _process(_delta: float) -> void:
-	if not _enabled:
+	if not _enabled or not _is_recording:
 		return
-	_poll_socket()
+	_capture_frame()
 
 func _exit_tree() -> void:
-	_close_socket()
+	if _is_recording:
+		stop_recording()
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-## Bắt đầu ghi hình qua OBS
+## Bắt đầu ghi hình qua FFmpeg
 func start_recording(timeout: float = -1.0) -> bool:
 	if not _enabled:
 		_log("Recording skipped (disabled)")
 		return true
-	var t: float = _request_timeout if timeout <= 0.0 else timeout
-	var ready: bool = await _ensure_ready(t)
-	if not ready:
-		_log("OBS start skipped: %s" % _last_error)
-		return false
-	var response: Dictionary = await _send_request("StartRecord", {}, t)
-	var ok: bool = _is_request_success(response, true)
-	if ok:
-		_is_recording = true
-		_log("OBS StartRecord OK")
-	else:
-		_log("OBS StartRecord failed: %s" % _request_status(response))
-	return ok
 
-## Dừng ghi hình qua OBS
-func stop_recording(timeout: float = -1.0) -> bool:
-	if not _enabled:
+	if _is_recording:
+		_log("Already recording")
 		return true
-	var t: float = _request_timeout if timeout <= 0.0 else timeout
-	var ready: bool = await _ensure_ready(t)
-	if not ready:
-		_log("OBS stop skipped: %s" % _last_error)
-		return false
-	var response: Dictionary = await _send_request("StopRecord", {}, t)
-	var ok: bool = _is_request_success(response, true)
-	if ok:
-		_is_recording = false
-		_log("OBS StopRecord OK")
-	else:
-		_log("OBS StopRecord failed: %s" % _request_status(response))
-	return ok
 
-## Kiểm tra OBS có sẵn sàng không
+	_load_config()
+
+	# Đảm bảo thư mục lưu output tồn tại
+	var global_output = ProjectSettings.globalize_path(_output_path)
+	var output_dir = global_output.get_base_dir()
+	if not DirAccess.dir_exists_absolute(output_dir):
+		var err = DirAccess.make_dir_recursive_absolute(output_dir)
+		if err != OK:
+			_log("Failed to create directory: %s (err %d)" % [output_dir, err])
+			return false
+
+	# Định dạng tên file đầu ra chứa ngày giờ quay
+	var ext = _output_path.get_extension()
+	var base = _output_path.get_basename()
+	var timestamp = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
+	
+	_current_final_output = "%s_%s.%s" % [base, timestamp, ext]
+	
+	# Thiết lập đường dẫn tạm
+	if _record_audio and _record_effect != null:
+		_current_temp_video = "%s_temp_video_%s.mp4" % [base, timestamp]
+		_current_temp_audio = "%s_temp_audio_%s.wav" % [base, timestamp]
+	else:
+		_current_temp_video = _current_final_output
+		_current_temp_audio = ""
+
+	var target_video_path = ProjectSettings.globalize_path(_current_temp_video)
+
+	# Xóa file trùng cũ nếu có
+	if FileAccess.file_exists(target_video_path):
+		DirAccess.remove_absolute(target_video_path)
+
+	# Lấy kích thước viewport thực tế
+	var vp_size = get_viewport().size
+	_viewport_w = vp_size.x
+	_viewport_h = vp_size.y
+
+	# Tính kích thước đích sau khi scale (đảm bảo chia hết cho 2 cho H.264)
+	var target_w = int(_viewport_w * _scale_factor)
+	var target_h = int(_viewport_h * _scale_factor)
+	if target_w % 2 != 0: target_w += 1
+	if target_h % 2 != 0: target_h += 1
+
+	var global_ffmpeg = ProjectSettings.globalize_path(_ffmpeg_path)
+	if not FileAccess.file_exists(global_ffmpeg):
+		_last_error = "FFmpeg binary not found at: %s" % global_ffmpeg
+		_log(_last_error)
+		return false
+
+	var args = PackedStringArray([
+		"-y",
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"-s", "%dx%d" % [target_w, target_h],
+		"-r", str(_fps),
+		"-i", "-",
+		"-c:v", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-preset", _preset,
+		"-crf", str(_crf),
+		target_video_path
+	])
+
+	_log("Launching FFmpeg: %s %s" % [global_ffmpeg, " ".join(args)])
+
+	var res = OS.execute_with_pipe(global_ffmpeg, args)
+	if res.is_empty() or not res.has("stdio") or res["pid"] <= 0:
+		_last_error = "Failed to launch FFmpeg process"
+		_log(_last_error)
+		return false
+
+	_ffmpeg_pipe = res["stdio"]
+	_ffmpeg_pid = res["pid"]
+	_is_recording = true
+
+	# Bật ghi âm
+	if _record_audio and _record_effect != null:
+		_record_effect.set_recording_active(true)
+		_log("Audio recording enabled and active on Master bus.")
+
+	# Reset queue & thread state
+	_queue_mutex.lock()
+	_frame_queue.clear()
+	_queue_mutex.unlock()
+	_thread_active = true
+
+	var thread_err = _thread.start(_thread_loop)
+	if thread_err != OK:
+		_last_error = "Failed to start worker thread (err %d)" % thread_err
+		_log(_last_error)
+		_is_recording = false
+		_ffmpeg_pipe.close()
+		_ffmpeg_pipe = null
+		if _ffmpeg_pid > 0:
+			OS.kill(_ffmpeg_pid)
+			_ffmpeg_pid = 0
+		if _record_audio and _record_effect != null:
+			_record_effect.set_recording_active(false)
+		return false
+
+	_log("Video recording started. Target: %dx%d @ %d FPS" % [target_w, target_h, _fps])
+	return true
+
+## Dừng ghi hình qua FFmpeg
+func stop_recording(timeout: float = -1.0) -> bool:
+	if not _is_recording:
+		return true
+
+	_log("Stopping recording. Draining %d frames..." % _frame_queue.size())
+	_is_recording = false
+
+	# Tắt ghi âm và lưu file wav
+	var has_audio: bool = false
+	if _record_audio and _record_effect != null:
+		_record_effect.set_recording_active(false)
+		var recording = _record_effect.get_recording()
+		if recording:
+			var global_audio_path = ProjectSettings.globalize_path(_current_temp_audio)
+			var err = recording.save_to_wav(global_audio_path)
+			if err == OK:
+				has_audio = true
+				_log("Saved audio to: %s" % _current_temp_audio)
+			else:
+				_log("Error saving audio file: %d" % err)
+
+	# Tắt thread và đánh thức thread đang đợi semaphore
+	_thread_active = false
+	_queue_semaphore.post()
+
+	# Chờ thread xử lý hết các frame trong hàng đợi và thoát
+	if _thread.is_started():
+		_thread.wait_to_finish()
+
+	# Đóng pipe để FFmpeg kết thúc ghi file video
+	if _ffmpeg_pipe != null:
+		_ffmpeg_pipe.close()
+		_ffmpeg_pipe = null
+
+	# Chờ tiến trình FFmpeg thoát hẳn
+	if _ffmpeg_pid > 0:
+		var deadline = Time.get_ticks_msec() + 5000 # Chờ tối đa 5 giây
+		while OS.is_process_running(_ffmpeg_pid) and Time.get_ticks_msec() < deadline:
+			OS.delay_msec(50)
+
+		if OS.is_process_running(_ffmpeg_pid):
+			_log("FFmpeg process did not exit, killing it.")
+			OS.kill(_ffmpeg_pid)
+		else:
+			_log("FFmpeg finished encoding video stream successfully.")
+		_ffmpeg_pid = 0
+
+	_queue_mutex.lock()
+	_frame_queue.clear()
+	_queue_mutex.unlock()
+
+	# Tiến hành ghép (multiplex) âm thanh và video nếu có ghi âm
+	if _record_audio and has_audio:
+		_merge_audio_and_video()
+	else:
+		_log("Audio recording was skipped or failed. Output is silent video at: %s" % _current_final_output)
+
+	_log("Video recording stopped.")
+	return true
+
+## Kiểm tra FFmpeg có sẵn sàng không
 func is_available(timeout: float = -1.0) -> bool:
+	_load_config()
 	if not _enabled:
 		return false
-	var t: float = _connect_timeout if timeout <= 0.0 else timeout
-	var ready: bool = await _ensure_ready(t)
-	if ready:
-		_log("OBS available")
-	else:
-		_log("OBS unavailable: %s" % _last_error)
-	return ready
+	var global_ffmpeg = ProjectSettings.globalize_path(_ffmpeg_path)
+	if not FileAccess.file_exists(global_ffmpeg):
+		_last_error = "FFmpeg binary not found at: %s" % global_ffmpeg
+		return false
+	return true
 
 ## Trả về true nếu đang ghi hình
 func is_recording() -> bool:
@@ -123,7 +266,7 @@ func is_recording() -> bool:
 # ── Signal Handlers (EventBus) ────────────────────────────────────────────────
 
 func _on_simulation_start_requested(_mode_id: String) -> void:
-	_log("Space pressed -> start recording now")
+	_log("Start simulation event -> start recording now")
 	await start_recording()
 
 func _on_simulation_completed(_mode_id: String, _duration: float) -> void:
@@ -134,191 +277,112 @@ func _on_simulation_stuck(_mode_id: String, _radius: float) -> void:
 	_log("Simulation stuck -> auto stop recording")
 	await stop_recording()
 
-# ── OBS WebSocket Connection ──────────────────────────────────────────────────
+func _on_simulation_reset() -> void:
+	if _is_recording:
+		_log("Simulation reset -> auto stop recording")
+		await stop_recording()
 
-func _connect_obs() -> void:
-	_reset_socket_state()
-	var url: String = "ws://%s:%d" % [_host, _port]
-	var err: int = _socket.connect_to_url(url)
-	if err != OK:
-		_last_error = "connect_to_url failed (%d)" % err
-		_log("OBS connection error: %s" % _last_error)
+# ── Capture and Thread Logic ──────────────────────────────────────────────────
 
-func _ensure_ready(timeout: float) -> bool:
-	if _is_socket_identified():
-		return true
-
-	_reset_socket_state()
-	var url: String = "ws://%s:%d" % [_host, _port]
-	var err: int = _socket.connect_to_url(url)
-	if err != OK:
-		_last_error = "connect_to_url failed (%d)" % err
-		return false
-
-	var deadline: int = Time.get_ticks_msec() + int(maxf(0.1, timeout) * 1000.0)
-	while Time.get_ticks_msec() <= deadline:
-		_poll_socket()
-		if _is_socket_identified():
-			return true
-		var state: int = _socket.get_ready_state()
-		if state == WebSocketPeer.STATE_CLOSED and _identify_sent:
-			break
-		await get_tree().process_frame
-
-	if _last_error.is_empty():
-		_last_error = "timeout waiting OBS identify"
-	return false
-
-# ── OBS WebSocket Protocol ────────────────────────────────────────────────────
-
-func _poll_socket() -> void:
-	if _socket == null:
-		return
-	var state: int = _socket.get_ready_state()
-	if state in [WebSocketPeer.STATE_CONNECTING, WebSocketPeer.STATE_OPEN, WebSocketPeer.STATE_CLOSING]:
-		_socket.poll()
-	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+func _capture_frame() -> void:
+	var img = get_viewport().get_texture().get_image()
+	if img == null or img.is_empty():
 		return
 
-	while _socket.get_available_packet_count() > 0:
-		var packet: PackedByteArray = _socket.get_packet()
-		var text: String = packet.get_string_from_utf8()
-		_handle_message(text)
+	_queue_mutex.lock()
+	if _frame_queue.size() < 180:
+		_frame_queue.append(img)
+	else:
+		_log("Warning: Frame queue buffer overflow, dropping frame!")
+	_queue_mutex.unlock()
+	
+	_queue_semaphore.post()
 
-func _handle_message(text: String) -> void:
-	var parsed: Variant = JSON.parse_string(text)
-	if typeof(parsed) != TYPE_DICTIONARY:
+func _thread_loop() -> void:
+	while _thread_active or not _frame_queue.is_empty():
+		_queue_semaphore.wait()
+
+		var img: Image = null
+		_queue_mutex.lock()
+		if not _frame_queue.is_empty():
+			img = _frame_queue.pop_front()
+		_queue_mutex.unlock()
+
+		if img != null:
+			_process_and_write_frame(img)
+
+	_log("Worker thread exited.")
+
+func _process_and_write_frame(img: Image) -> void:
+	if _ffmpeg_pid > 0 and not OS.is_process_running(_ffmpeg_pid):
+		_log("Error: FFmpeg process died unexpectedly!")
+		_is_recording = false
 		return
-	var msg: Dictionary = parsed as Dictionary
-	var op: int = int(msg.get("op", -1))
-	var d: Dictionary = msg.get("d", {}) as Dictionary if typeof(msg.get("d")) == TYPE_DICTIONARY else {}
 
-	match op:
-		0:  # Hello
-			_handle_hello(d)
-		2:  # Identified
-			_identified = true
-			_log("OBS identified successfully")
-		7:  # RequestResponse
-			var rid: String = str(d.get("requestId", "")).strip_edges()
-			if not rid.is_empty():
-				_pending_responses[rid] = d
-		9:  # IdentifyFailed
-			_last_error = "OBS identify failed (password?)"
-			_log(_last_error)
-			_close_socket()
+	if _scale_factor != 1.0:
+		var target_w = int(_viewport_w * _scale_factor)
+		var target_h = int(_viewport_h * _scale_factor)
+		if target_w % 2 != 0: target_w += 1
+		if target_h % 2 != 0: target_h += 1
+		img.resize(target_w, target_h, Image.INTERPOLATE_BILINEAR)
 
-func _handle_hello(data: Dictionary) -> void:
-	var identify: Dictionary = {"rpcVersion": 1}
-	var auth: Variant = data.get("authentication", null)
-	if typeof(auth) == TYPE_DICTIONARY:
-		var auth_data: Dictionary = auth as Dictionary
-		if _password.strip_edges().is_empty():
-			_last_error = "OBS requires password but none configured"
-			_log(_last_error)
-			_close_socket()
-			return
-		var challenge: String = str(auth_data.get("challenge", ""))
-		var salt: String = str(auth_data.get("salt", ""))
-		identify["authentication"] = _build_auth(_password, challenge, salt)
+	img.convert(Image.FORMAT_RGB8)
+	var data = img.get_data()
 
-	_send_json({"op": 1, "d": identify})
-	_identify_sent = true
-
-func _send_request(request_type: String, request_data: Dictionary, timeout: float) -> Dictionary:
-	if not _is_socket_identified():
-		return {}
-
-	var rid: String = str(_next_request_id)
-	_next_request_id += 1
-	var payload: Dictionary = {
-		"requestType": request_type,
-		"requestId": rid,
-	}
-	if not request_data.is_empty():
-		payload["requestData"] = request_data
-	_send_json({"op": 6, "d": payload})
-
-	var deadline: int = Time.get_ticks_msec() + int(maxf(0.1, timeout) * 1000.0)
-	while Time.get_ticks_msec() <= deadline:
-		_poll_socket()
-		if _pending_responses.has(rid):
-			var resp: Variant = _pending_responses.get(rid, {})
-			_pending_responses.erase(rid)
-			return resp as Dictionary if typeof(resp) == TYPE_DICTIONARY else {}
-		if _socket.get_ready_state() == WebSocketPeer.STATE_CLOSED:
-			break
-		await get_tree().process_frame
-
-	_last_error = "timeout waiting OBS response for %s" % request_type
-	return {}
-
-func _send_json(payload: Dictionary) -> void:
-	if _socket == null or _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
-		return
-	_socket.send_text(JSON.stringify(payload))
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-func _build_auth(password: String, challenge: String, salt: String) -> String:
-	var secret: PackedByteArray = (password + salt).to_utf8_buffer()
-	var secret_hash: PackedByteArray = _sha256(secret)
-	var secret_b64: String = Marshalls.raw_to_base64(secret_hash)
-	var auth_src: PackedByteArray = (secret_b64 + challenge).to_utf8_buffer()
-	var auth_hash: PackedByteArray = _sha256(auth_src)
-	return Marshalls.raw_to_base64(auth_hash)
-
-func _sha256(buffer: PackedByteArray) -> PackedByteArray:
-	var hasher := HashingContext.new()
-	hasher.start(HashingContext.HASH_SHA256)
-	hasher.update(buffer)
-	return hasher.finish()
+	if _ffmpeg_pipe != null:
+		_ffmpeg_pipe.store_buffer(data)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-func _is_socket_identified() -> bool:
-	return _socket != null and _socket.get_ready_state() == WebSocketPeer.STATE_OPEN and _identified
+func _setup_audio_recording() -> void:
+	var master_bus_idx = AudioServer.get_bus_index("Master")
+	var found = false
+	for i in AudioServer.get_bus_effect_count(master_bus_idx):
+		if AudioServer.get_bus_effect(master_bus_idx, i) is AudioEffectRecord:
+			_record_effect = AudioServer.get_bus_effect(master_bus_idx, i)
+			found = true
+			break
+			
+	if not found:
+		_record_effect = AudioEffectRecord.new()
+		AudioServer.add_bus_effect(master_bus_idx, _record_effect)
+		_log("Added new AudioEffectRecord dynamically to Master bus.")
 
-func _close_socket() -> void:
-	if _socket == null:
-		return
-	var state: int = _socket.get_ready_state()
-	if state in [WebSocketPeer.STATE_CONNECTING, WebSocketPeer.STATE_OPEN]:
-		_socket.close()
+func _merge_audio_and_video() -> void:
+	var global_ffmpeg = ProjectSettings.globalize_path(_ffmpeg_path)
+	var global_temp_video = ProjectSettings.globalize_path(_current_temp_video)
+	var global_temp_audio = ProjectSettings.globalize_path(_current_temp_audio)
+	var global_final = ProjectSettings.globalize_path(_current_final_output)
 
-func _reset_socket_state() -> void:
-	_close_socket()
-	_socket = WebSocketPeer.new()
-	_identified = false
-	_identify_sent = false
-	_pending_responses.clear()
-	_last_error = ""
+	_log("Merging audio and video streams using FFmpeg...")
+	
+	# Command: ffmpeg -y -i temp_video.mp4 -i temp_audio.wav -c:v copy -c:a aac final.mp4
+	var args = PackedStringArray([
+		"-y",
+		"-i", global_temp_video,
+		"-i", global_temp_audio,
+		"-c:v", "copy",
+		"-c:a", "aac",
+		global_final
+	])
 
-func _is_request_success(response: Dictionary, allow_already: bool) -> bool:
-	if response.is_empty():
-		return false
-	var status: Variant = response.get("requestStatus", {})
-	if typeof(status) != TYPE_DICTIONARY:
-		return false
-	var s: Dictionary = status as Dictionary
-	if bool(s.get("result", false)):
-		return true
-	if not allow_already:
-		return false
-	var code: int = int(s.get("code", 0))
-	var comment: String = str(s.get("comment", "")).to_lower()
-	if comment.contains("already") or code in [504, 505]:
-		return true
-	return false
+	var output = []
+	var exit_code = OS.execute(global_ffmpeg, args, output, true)
 
-func _request_status(response: Dictionary) -> String:
-	if response.is_empty():
-		return _last_error if not _last_error.is_empty() else "empty_response"
-	var status: Variant = response.get("requestStatus", {})
-	if typeof(status) != TYPE_DICTIONARY:
-		return "missing_request_status"
-	var s: Dictionary = status as Dictionary
-	return "code=%d comment=%s" % [int(s.get("code", 0)), str(s.get("comment", ""))]
+	if exit_code == 0:
+		_log("Successfully generated video with audio at: %s" % _current_final_output)
+		# Xóa file tạm
+		DirAccess.remove_absolute(global_temp_video)
+		DirAccess.remove_absolute(global_temp_audio)
+	else:
+		_log("Error: FFmpeg merge failed! Exit code: %d" % exit_code)
+		# Fallback: rename file video tạm thành file chính nếu ghép lỗi
+		if FileAccess.file_exists(global_temp_video):
+			var dir = DirAccess.open("res://")
+			dir.rename(_current_temp_video, _current_final_output)
+			_log("Fallback: preserved silent video output at: %s" % _current_final_output)
+		if FileAccess.file_exists(global_temp_audio):
+			DirAccess.remove_absolute(global_temp_audio)
 
 func _load_config() -> void:
 	var gm = get_node_or_null("/root/GameManager")
@@ -326,14 +390,22 @@ func _load_config() -> void:
 		var cfg: Dictionary = gm.get_current_config()
 		var rec: Dictionary = cfg.get("recording", {})
 		_enabled = rec.get("enabled", false)
-		_host = rec.get("host", "127.0.0.1")
-		_port = rec.get("port", 4455)
-		_password = rec.get("password", "")
-		_connect_timeout = rec.get("connect_timeout", 4.0)
-		_request_timeout = rec.get("request_timeout", 4.0)
+		_record_audio = rec.get("record_audio", true)
+		_ffmpeg_path = rec.get("ffmpeg_path", "res://ffmpeg/bin/ffmpeg.exe")
+		_output_path = rec.get("output_path", "res://recordings/spiral_destruction.mp4")
+		_fps = int(rec.get("fps", 60))
+		_scale_factor = float(rec.get("scale_factor", 1.0))
+		_preset = rec.get("preset", "ultrafast")
+		_crf = int(rec.get("crf", 23))
 		_auto_start = rec.get("auto_start", true)
 		_auto_stop = rec.get("auto_stop", true)
 		_verbose = rec.get("verbose", true)
+
+		var vp: Dictionary = cfg.get("viewport", {})
+		var res_arr: Array = vp.get("resolution", [])
+		if res_arr.size() >= 2:
+			_viewport_w = int(res_arr[0])
+			_viewport_h = int(res_arr[1])
 
 func _log(message: String) -> void:
 	if not _verbose:

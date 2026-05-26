@@ -33,23 +33,6 @@ var _spawn_line_color: Color = Color.WHITE
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
-	# Center HUD in the 1920x1080 screen with 9:16 vertical ratio
-	anchor_left = 0.5
-	anchor_right = 0.5
-	anchor_top = 0.0
-	anchor_bottom = 1.0
-	grow_horizontal = GROW_DIRECTION_BOTH
-	grow_vertical = GROW_DIRECTION_BOTH
-	
-	var vp_size = get_viewport_rect().size
-	if vp_size == Vector2.ZERO:
-		vp_size = Vector2(1920, 1080)
-	var target_width = vp_size.y * 9.0 / 16.0
-	offset_left = -target_width / 2.0
-	offset_right = target_width / 2.0
-	offset_top = 0.0
-	offset_bottom = 0.0
-	
 	_create_labels()
 	_connect_signals()
 	set_process_internal(true)
@@ -62,9 +45,8 @@ func _process(delta: float) -> void:
 	_elapsed_time += delta
 
 func _draw() -> void:
-	# Draw a white outline border representing the 9:16 crop box
-	var rect := Rect2(Vector2.ZERO, size)
-	draw_rect(rect, Color.WHITE, false, 2.0)
+	# Không vẽ gì — spawn_line đã chuyển sang world space trong SpiralMode
+	pass
 
 # ── Signal handlers ───────────────────────────────────────────────────────────
 
@@ -110,13 +92,12 @@ func _create_labels() -> void:
 	_label_title.text = _hud_title
 	_label_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_label_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_label_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_label_title.anchor_left = 0.0
 	_label_title.anchor_right = 1.0
 	_label_title.offset_left = 30.0
 	_label_title.offset_right = -30.0
-	_label_title.offset_top = 100.0
-	_label_title.offset_bottom = 200.0
+	_label_title.offset_top = 170.0
+	_label_title.offset_bottom = 270.0
 	
 	# Cấu hình font + màu sắc + outline từ LabelSettings (đảm bảo hoạt động)
 	var font: Font = load("res://font/Anton-Regular.ttf")
@@ -132,15 +113,14 @@ func _create_labels() -> void:
 
 	# Bottom info — chính giữa, hiển thị radius + destroy
 	_label_bottom_info = _make_label("Ball radius: 62.0 px  |  0 / 0", HorizontalAlignment.HORIZONTAL_ALIGNMENT_CENTER)
-	_label_bottom_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_label_bottom_info.anchor_left = 0.0
 	_label_bottom_info.anchor_right = 1.0
 	_label_bottom_info.anchor_top = 1.0
 	_label_bottom_info.anchor_bottom = 1.0
 	_label_bottom_info.offset_left = 30.0
 	_label_bottom_info.offset_right = -30.0
-	_label_bottom_info.offset_top = -180.0
-	_label_bottom_info.offset_bottom = -130.0
+	_label_bottom_info.offset_top = -340.0
+	_label_bottom_info.offset_bottom = -300.0
 	add_child(_label_bottom_info)
 
 func _make_label(default_text: String, alignment: HorizontalAlignment) -> Label:

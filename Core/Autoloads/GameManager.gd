@@ -158,34 +158,44 @@ func _load_mode_scene(mode_id: String) -> void:
 	_set_state(State.IDLE)
 	EventBus.simulation_ready.emit(mode_id)
 
+	# Tự động bắt đầu nếu có tham số truyền vào từ command line
+	if "--auto-start" in OS.get_cmdline_args() or "--auto-start" in OS.get_cmdline_user_args():
+		_auto_start_flow()
+
+func _auto_start_flow() -> void:
+	await get_tree().create_timer(1.0).timeout
+	if current_state == State.IDLE and not _start_requested:
+		_start_requested = true
+		_start_simulation_flow()
+
 func _on_simulation_completed(mode_id: String, duration: float) -> void:
 	_set_state(State.COMPLETED)
 
 func _set_state(new_state: State) -> void:
 	current_state = new_state
 
-## Tiến trình bắt đầu game: Kiểm tra OBS, ghi hình và quyết định delay
+## Tiến trình bắt đầu game: Kiểm tra FFmpeg, ghi hình và quyết định delay
 func _start_simulation_flow() -> void:
 	if _current_simulation == null:
 		return
 
-	var has_obs: bool = false
+	var recording_active: bool = false
 	var vr = get_node_or_null("/root/VideoRecorder")
 	if vr and vr.has_method("is_available"):
-		has_obs = await vr.is_available(1.0)
+		recording_active = await vr.is_available(1.0)
 
 	var delay: float = 0.0
-	if has_obs:
-		delay = 5.0
-		print("[GameManager] Đã phát hiện OBS đang chạy! Đang kích hoạt ghi hình OBS và hoãn game chạy sau 5 giây.")
-		# Gọi ghi hình OBS thông qua signal
+	if recording_active:
+		delay = 1.5
+		print("[GameManager] Đang kích hoạt tự động quay video bằng FFmpeg. Trò chơi sẽ bắt đầu sau %.1f giây." % delay)
+		# Gọi ghi hình thông qua signal
 		EventBus.simulation_start_requested.emit(current_mode_id)
 	else:
-		# Không có OBS, lấy delay ngắn mặc định từ config để regrow/spawn animation chạy mượt
+		# Không ghi hình, lấy delay ngắn mặc định từ config để regrow/spawn animation chạy mượt
 		var auto_test_cfg: Dictionary = _current_config.get("auto_test", {})
 		var trans_cfg: Dictionary = auto_test_cfg.get("transition", {})
 		delay = trans_cfg.get("start_delay", 0.5)
-		print("[GameManager] Không phát hiện OBS. Game chạy ngay sau %.1f giây." % delay)
+		print("[GameManager] Tự động quay video bị tắt. Game chạy ngay sau %.1f giây." % delay)
 
 	# Dùng tween để delay rồi start
 	var start_tween: Tween = create_tween()

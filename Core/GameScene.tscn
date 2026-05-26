@@ -8,7 +8,7 @@
 script = ExtResource("1_gamescene")
 
 [node name="Camera2D" type="Camera2D" parent="."]
-position = Vector2(960, 540)
+position = Vector2(540, 960)
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 layer = 10

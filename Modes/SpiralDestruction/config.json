@@ -9,14 +9,14 @@
   },
 
   "viewport": {
-	"resolution": [1920, 1080],
+	"resolution": [1080, 1920],
 	"fullscreen": false,
 	"background_color": "#000000",
-	"camera_zoom": 0.4
+	"camera_zoom": 0.9
   },
 
   "spiral": {
-	"center": [960.0, 540.0],
+	"center": [540.0, 960.0],
 	"gap_max": 110.0,
 	"gap_min": 35.0,
 	"turns": 7.0,
@@ -128,15 +128,17 @@
   },
 
   "recording": {
-	"enabled": true,
-	"host": "192.168.1.15",
-	"port": 4455,
-	"password": "12345678",
-	"connect_timeout": 4.0,
-	"request_timeout": 4.0,
-	"auto_start": true,
-	"auto_stop": true,
-	"verbose": true
+    "enabled": true,
+    "record_audio": true,
+    "output_path": "res://recordings/spiral_destruction.mp4",
+    "ffmpeg_path": "res://ffmpeg/bin/ffmpeg.exe",
+    "fps": 60,
+    "scale_factor": 1.0,
+    "preset": "ultrafast",
+    "crf": 23,
+    "auto_start": true,
+    "auto_stop": true,
+    "verbose": true
   },
 
   "audio": {
@@ -155,23 +157,23 @@
   },
 
   "hud": {
-	"title": "WILL THE BALLS GET TO CENTER",
-	"title_font_size": 32,
-	"title_color": "#FF0000",
-	"title_outline_color": "#FFFFFF",
-	"title_outline_size": 8,
-	"info_font_size": 16,
-	"size_meter": {
-	  "position": [955, 130],
-	  "size": [24, 350],
-	  "radius_min": 15.0,
-	  "radius_max": 62.0,
-	  "border_width": 3
-	},
-	"spawn_line": {
-	  "position": [950, 450],
-	  "length": 50,
-	  "color": "#FFFFFF"
-	}
+    "title": "WILL THE BALLS GET TO CENTER",
+    "title_font_size": 64,
+    "title_color": "#FF0000",
+    "title_outline_color": "#FFFFFF",
+    "title_outline_size": 20,
+    "info_font_size": 32,
+    "size_meter": {
+      "position": [955, 130],
+      "size": [24, 350],
+      "radius_min": 15.0,
+      "radius_max": 62.0,
+      "border_width": 3
+    },
+    "spawn_line": {
+      "position": [950, 450],
+      "length": 50,
+      "color": "#FFFFFF"
+    }
   }
 }

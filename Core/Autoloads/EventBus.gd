@@ -8,6 +8,9 @@ extends Node
 ## Phát khi simulation mode đã setup xong, sẵn sàng chờ R (press to start)
 signal simulation_ready(mode_id: String)
 
+## Phát khi người dùng nhấn Space để yêu cầu bắt đầu (trước delay)
+signal simulation_start_requested(mode_id: String)
+
 ## Phát khi một simulation mode bắt đầu chạy
 signal simulation_started(mode_id: String)
 

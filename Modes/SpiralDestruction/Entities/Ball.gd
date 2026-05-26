@@ -46,7 +46,7 @@ func _get_win_dist() -> float: return _ball_cfg.get("win_distance", 30.0)
 
 var SPIRAL_CENTER: Vector2: get = _get_center
 func _get_center() -> Vector2:
-	var arr: Array = _spiral_cfg.get("center", [540.0, 960.0])
+	var arr: Array = _spiral_cfg.get("center", [960.0, 540.0])
 	return Vector2(arr[0], arr[1])
 
 var TRAIL_LENGTH: int: get = _get_trail_len

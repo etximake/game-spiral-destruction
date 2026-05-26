@@ -120,6 +120,9 @@ func setup() -> void:
 	map_controller.generate()
 	render_controller.setup(map_controller)
 	ball.set("map_controller", map_controller)
+	
+	# Dynamically position CenterGlow at the spiral center
+	center_glow.position = map_controller.SPIRAL_CENTER
 
 	# Auto-test: set bán kính ban đầu theo ngưỡng hiện tại
 	if _auto_test_enabled and _test_radii.size() > 0:

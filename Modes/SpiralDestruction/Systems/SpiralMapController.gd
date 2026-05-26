@@ -27,7 +27,7 @@ var SPIRAL_POINTS_PER_TURN: int:
 	get: return _spiral_cfg.get("points_per_turn", 120)
 var SPIRAL_CENTER: Vector2:
 	get:
-		var arr: Array = _spiral_cfg.get("center", [540.0, 960.0])
+		var arr: Array = _spiral_cfg.get("center", [960.0, 540.0])
 		return Vector2(arr[0], arr[1])
 
 # ── Hằng số Tam giác (từ config nếu có) ───────────────────────────────────────

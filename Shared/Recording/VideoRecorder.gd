@@ -1,220 +1,341 @@
 ## VideoRecorder.gd
-## Module quay video — ghi lại màn hình gameplay.
-## Chỉ ghi khi nhấn Space → game chạy, dừng khi game kết thúc.
+## Quay màn hình game qua OBS WebSocket.
+## Tự động bắt đầu/dừng recording theo lifecycle simulation.
+## Cấu hình: đặt trong config.json → "recording" section.
 ##
-## Yêu cầu: FFmpeg (https://ffmpeg.org/)
-##   - Cách 1 (khuyên dùng): Copy ffmpeg.exe vào cùng thư mục file game
-##   - Cách 2: Cài FFmpeg vào PATH
-##   - Cách 3: Set đường dẫn trong config.json → recording.ffmpeg_path
-##
-## Cách dùng:
-##   1. Mở game bình thường (không cần flag --write-movie)
-##   2. Nhấn Space → tự động ghi hình window game
-##   3. Game kết thúc → video lưu tại user://recordings/
+## OBS WebSocket 5.x Protocol:
+##   op 0: Hello (server → client)
+##   op 1: Identify (client → server)
+##   op 2: Identified (server → client)
+##   op 6: Request (client → server)
+##   op 7: RequestResponse (server → client)
+##   op 9: IdentifyFailed (server → client)
 extends Node
 
-# ── Config ────────────────────────────────────────────────────────────────────
-var _enabled: bool = true
-var _show_indicator: bool = true
-var _ffmpeg_path: String = "ffmpeg"
-var _recording: bool = false
-var _ffmpeg_available: bool = false
-var _ffmpeg_pid: int = -1
-var _output_path: String = ""
+# ── Config (từ GameManager) ───────────────────────────────────────────────────
+var _enabled: bool = false
+var _host: String = "127.0.0.1"
+var _port: int = 4455
+var _password: String = "12345678"
+var _connect_timeout: float = 4.0
+var _request_timeout: float = 4.0
+var _auto_start: bool = true
+var _auto_stop: bool = true
+var _verbose: bool = true
 
-# ── Recording indicator UI ────────────────────────────────────────────────────
-var _indicator: CanvasLayer = null
-var _indicator_container: Control = null
-var _indicator_dot: ColorRect = null
-var _indicator_timer: float = 0.0
+# ── OBS WebSocket State ───────────────────────────────────────────────────────
+var _socket: WebSocketPeer = WebSocketPeer.new()
+var _identified: bool = false
+var _identify_sent: bool = false
+var _pending_responses: Dictionary = {}
+var _next_request_id: int = 1
+var _last_error: String = ""
+var _is_recording: bool = false
 
-# ── Autoload shortcuts ────────────────────────────────────────────────────────
-@onready var _event_bus: Node = get_node("/root/EventBus")
-
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
+	# Config chưa sẵn sàng ở _ready() (GameScene chưa load mode).
+	# Đợi simulation_ready để load config rồi mới kết nối OBS.
+	var bus = get_node_or_null("/root/EventBus")
+	if bus:
+		bus.simulation_ready.connect(_on_simulation_ready)
+		if _auto_stop:
+			bus.simulation_completed.connect(_on_simulation_completed)
+			bus.simulation_stuck.connect(_on_simulation_stuck)
+
+func _on_simulation_ready(_mode_id: String) -> void:
 	_load_config()
-	
-	# Kiểm tra FFmpeg
-	_ffmpeg_available = _check_ffmpeg()
-	
-	if _ffmpeg_available:
-		# Tạo thư mục output
-		DirAccess.make_dir_recursive_absolute("D:\\Tai lieu kenh algodoo\\game-spiral-destruction\\output")
-		print("[VideoRecorder] ✅ FFmpeg available — chờ Space để ghi hình")
+	if not _enabled:
+		_log("VideoRecorder disabled in config")
+		return
+
+	# Kết nối tới OBS WebSocket
+	_connect_obs()
+
+	# Lắng nghe Space để bắt đầu recording (chỉ 1 lần)
+	var bus = get_node_or_null("/root/EventBus")
+	if bus and _auto_start and not bus.simulation_start_requested.is_connected(_on_simulation_start_requested):
+		bus.simulation_start_requested.connect(_on_simulation_start_requested)
+
+func _process(_delta: float) -> void:
+	if not _enabled:
+		return
+	_poll_socket()
+
+func _exit_tree() -> void:
+	_close_socket()
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+## Bắt đầu ghi hình qua OBS
+func start_recording(timeout: float = -1.0) -> bool:
+	if not _enabled:
+		_log("Recording skipped (disabled)")
+		return true
+	var t: float = _request_timeout if timeout <= 0.0 else timeout
+	var ready: bool = await _ensure_ready(t)
+	if not ready:
+		_log("OBS start skipped: %s" % _last_error)
+		return false
+	var response: Dictionary = await _send_request("StartRecord", {}, t)
+	var ok: bool = _is_request_success(response, true)
+	if ok:
+		_is_recording = true
+		_log("OBS StartRecord OK")
 	else:
-		print("[VideoRecorder] ❌ Không tìm thấy FFmpeg. Tải tại: https://ffmpeg.org/")
-		print("[VideoRecorder]    Thêm ffmpeg.exe vào PATH, hoặc đặt cạnh file game.")
-	
-	# Tạo indicator
-	if _show_indicator:
-		_create_indicator()
-	_update_indicator_visible(false)
-	
-	# Kết nối signal
-	_event_bus.simulation_started.connect(_on_simulation_started)
-	_event_bus.simulation_completed.connect(_on_simulation_completed)
+		_log("OBS StartRecord failed: %s" % _request_status(response))
+	return ok
+
+## Dừng ghi hình qua OBS
+func stop_recording(timeout: float = -1.0) -> bool:
+	if not _enabled:
+		return true
+	var t: float = _request_timeout if timeout <= 0.0 else timeout
+	var ready: bool = await _ensure_ready(t)
+	if not ready:
+		_log("OBS stop skipped: %s" % _last_error)
+		return false
+	var response: Dictionary = await _send_request("StopRecord", {}, t)
+	var ok: bool = _is_request_success(response, true)
+	if ok:
+		_is_recording = false
+		_log("OBS StopRecord OK")
+	else:
+		_log("OBS StopRecord failed: %s" % _request_status(response))
+	return ok
+
+## Kiểm tra OBS có sẵn sàng không
+func is_available(timeout: float = -1.0) -> bool:
+	if not _enabled:
+		return false
+	var t: float = _connect_timeout if timeout <= 0.0 else timeout
+	var ready: bool = await _ensure_ready(t)
+	if ready:
+		_log("OBS available")
+	else:
+		_log("OBS unavailable: %s" % _last_error)
+	return ready
+
+## Trả về true nếu đang ghi hình
+func is_recording() -> bool:
+	return _is_recording
+
+# ── Signal Handlers (EventBus) ────────────────────────────────────────────────
+
+func _on_simulation_start_requested(_mode_id: String) -> void:
+	_log("Space pressed -> start recording now")
+	await start_recording()
+
+func _on_simulation_completed(_mode_id: String, _duration: float) -> void:
+	_log("Simulation completed -> auto stop recording")
+	await stop_recording()
+
+func _on_simulation_stuck(_mode_id: String, _radius: float) -> void:
+	_log("Simulation stuck -> auto stop recording")
+	await stop_recording()
+
+# ── OBS WebSocket Connection ──────────────────────────────────────────────────
+
+func _connect_obs() -> void:
+	_reset_socket_state()
+	var url: String = "ws://%s:%d" % [_host, _port]
+	var err: int = _socket.connect_to_url(url)
+	if err != OK:
+		_last_error = "connect_to_url failed (%d)" % err
+		_log("OBS connection error: %s" % _last_error)
+
+func _ensure_ready(timeout: float) -> bool:
+	if _is_socket_identified():
+		return true
+
+	_reset_socket_state()
+	var url: String = "ws://%s:%d" % [_host, _port]
+	var err: int = _socket.connect_to_url(url)
+	if err != OK:
+		_last_error = "connect_to_url failed (%d)" % err
+		return false
+
+	var deadline: int = Time.get_ticks_msec() + int(maxf(0.1, timeout) * 1000.0)
+	while Time.get_ticks_msec() <= deadline:
+		_poll_socket()
+		if _is_socket_identified():
+			return true
+		var state: int = _socket.get_ready_state()
+		if state == WebSocketPeer.STATE_CLOSED and _identify_sent:
+			break
+		await get_tree().process_frame
+
+	if _last_error.is_empty():
+		_last_error = "timeout waiting OBS identify"
+	return false
+
+# ── OBS WebSocket Protocol ────────────────────────────────────────────────────
+
+func _poll_socket() -> void:
+	if _socket == null:
+		return
+	var state: int = _socket.get_ready_state()
+	if state in [WebSocketPeer.STATE_CONNECTING, WebSocketPeer.STATE_OPEN, WebSocketPeer.STATE_CLOSING]:
+		_socket.poll()
+	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+
+	while _socket.get_available_packet_count() > 0:
+		var packet: PackedByteArray = _socket.get_packet()
+		var text: String = packet.get_string_from_utf8()
+		_handle_message(text)
+
+func _handle_message(text: String) -> void:
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	var msg: Dictionary = parsed as Dictionary
+	var op: int = int(msg.get("op", -1))
+	var d: Dictionary = msg.get("d", {}) as Dictionary if typeof(msg.get("d")) == TYPE_DICTIONARY else {}
+
+	match op:
+		0:  # Hello
+			_handle_hello(d)
+		2:  # Identified
+			_identified = true
+			_log("OBS identified successfully")
+		7:  # RequestResponse
+			var rid: String = str(d.get("requestId", "")).strip_edges()
+			if not rid.is_empty():
+				_pending_responses[rid] = d
+		9:  # IdentifyFailed
+			_last_error = "OBS identify failed (password?)"
+			_log(_last_error)
+			_close_socket()
+
+func _handle_hello(data: Dictionary) -> void:
+	var identify: Dictionary = {"rpcVersion": 1}
+	var auth: Variant = data.get("authentication", null)
+	if typeof(auth) == TYPE_DICTIONARY:
+		var auth_data: Dictionary = auth as Dictionary
+		if _password.strip_edges().is_empty():
+			_last_error = "OBS requires password but none configured"
+			_log(_last_error)
+			_close_socket()
+			return
+		var challenge: String = str(auth_data.get("challenge", ""))
+		var salt: String = str(auth_data.get("salt", ""))
+		identify["authentication"] = _build_auth(_password, challenge, salt)
+
+	_send_json({"op": 1, "d": identify})
+	_identify_sent = true
+
+func _send_request(request_type: String, request_data: Dictionary, timeout: float) -> Dictionary:
+	if not _is_socket_identified():
+		return {}
+
+	var rid: String = str(_next_request_id)
+	_next_request_id += 1
+	var payload: Dictionary = {
+		"requestType": request_type,
+		"requestId": rid,
+	}
+	if not request_data.is_empty():
+		payload["requestData"] = request_data
+	_send_json({"op": 6, "d": payload})
+
+	var deadline: int = Time.get_ticks_msec() + int(maxf(0.1, timeout) * 1000.0)
+	while Time.get_ticks_msec() <= deadline:
+		_poll_socket()
+		if _pending_responses.has(rid):
+			var resp: Variant = _pending_responses.get(rid, {})
+			_pending_responses.erase(rid)
+			return resp as Dictionary if typeof(resp) == TYPE_DICTIONARY else {}
+		if _socket.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+			break
+		await get_tree().process_frame
+
+	_last_error = "timeout waiting OBS response for %s" % request_type
+	return {}
+
+func _send_json(payload: Dictionary) -> void:
+	if _socket == null or _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	_socket.send_text(JSON.stringify(payload))
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+func _build_auth(password: String, challenge: String, salt: String) -> String:
+	var secret: PackedByteArray = (password + salt).to_utf8_buffer()
+	var secret_hash: PackedByteArray = _sha256(secret)
+	var secret_b64: String = Marshalls.raw_to_base64(secret_hash)
+	var auth_src: PackedByteArray = (secret_b64 + challenge).to_utf8_buffer()
+	var auth_hash: PackedByteArray = _sha256(auth_src)
+	return Marshalls.raw_to_base64(auth_hash)
+
+func _sha256(buffer: PackedByteArray) -> PackedByteArray:
+	var hasher := HashingContext.new()
+	hasher.start(HashingContext.HASH_SHA256)
+	hasher.update(buffer)
+	return hasher.finish()
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+func _is_socket_identified() -> bool:
+	return _socket != null and _socket.get_ready_state() == WebSocketPeer.STATE_OPEN and _identified
+
+func _close_socket() -> void:
+	if _socket == null:
+		return
+	var state: int = _socket.get_ready_state()
+	if state in [WebSocketPeer.STATE_CONNECTING, WebSocketPeer.STATE_OPEN]:
+		_socket.close()
+
+func _reset_socket_state() -> void:
+	_close_socket()
+	_socket = WebSocketPeer.new()
+	_identified = false
+	_identify_sent = false
+	_pending_responses.clear()
+	_last_error = ""
+
+func _is_request_success(response: Dictionary, allow_already: bool) -> bool:
+	if response.is_empty():
+		return false
+	var status: Variant = response.get("requestStatus", {})
+	if typeof(status) != TYPE_DICTIONARY:
+		return false
+	var s: Dictionary = status as Dictionary
+	if bool(s.get("result", false)):
+		return true
+	if not allow_already:
+		return false
+	var code: int = int(s.get("code", 0))
+	var comment: String = str(s.get("comment", "")).to_lower()
+	if comment.contains("already") or code in [504, 505]:
+		return true
+	return false
+
+func _request_status(response: Dictionary) -> String:
+	if response.is_empty():
+		return _last_error if not _last_error.is_empty() else "empty_response"
+	var status: Variant = response.get("requestStatus", {})
+	if typeof(status) != TYPE_DICTIONARY:
+		return "missing_request_status"
+	var s: Dictionary = status as Dictionary
+	return "code=%d comment=%s" % [int(s.get("code", 0)), str(s.get("comment", ""))]
 
 func _load_config() -> void:
 	var gm = get_node_or_null("/root/GameManager")
 	if gm and gm.has_method("get_current_config"):
 		var cfg: Dictionary = gm.get_current_config()
-		var rec_cfg: Dictionary = cfg.get("recording", {})
-		_enabled = rec_cfg.get("enabled", true)
-		_show_indicator = rec_cfg.get("show_indicator", true)
-		_ffmpeg_path = rec_cfg.get("ffmpeg_path", _ffmpeg_path)
+		var rec: Dictionary = cfg.get("recording", {})
+		_enabled = rec.get("enabled", false)
+		_host = rec.get("host", "127.0.0.1")
+		_port = rec.get("port", 4455)
+		_password = rec.get("password", "")
+		_connect_timeout = rec.get("connect_timeout", 4.0)
+		_request_timeout = rec.get("request_timeout", 4.0)
+		_auto_start = rec.get("auto_start", true)
+		_auto_stop = rec.get("auto_stop", true)
+		_verbose = rec.get("verbose", true)
 
-func _process(delta: float) -> void:
-	if not _recording or not _show_indicator or not is_instance_valid(_indicator):
+func _log(message: String) -> void:
+	if not _verbose:
 		return
-	# Nhấp nháy chấm đỏ
-	_indicator_timer += delta
-	var blink: float = sin(_indicator_timer * 4.0) * 0.5 + 0.5
-	if is_instance_valid(_indicator_dot):
-		_indicator_dot.modulate.a = 0.3 + blink * 0.7
-
-# ── FFmpeg ────────────────────────────────────────────────────────────────────
-
-func _check_ffmpeg() -> bool:
-	var output: Array = []
-
-	# Helper: kiểm tra file tồn tại rồi mới execute (tránh warning)
-	var _try_exec := func(path: String) -> bool:
-		if not FileAccess.file_exists(path):
-			return false
-		return OS.execute(path, ["-version"], output, true) == 0
-
-	# 1. ffmpeg/bin/ffmpeg.exe trong thư mục project (res://ffmpeg/bin/)
-	var project_ffmpeg_bin: String = ProjectSettings.globalize_path("res://ffmpeg/bin/ffmpeg.exe")
-	if _try_exec.call(project_ffmpeg_bin):
-		_ffmpeg_path = project_ffmpeg_bin
-		return true
-	# 2. ffmpeg.exe trong thư mục project Godot (res://)
-	var project_ffmpeg: String = ProjectSettings.globalize_path("res://ffmpeg.exe")
-	if _try_exec.call(project_ffmpeg):
-		_ffmpeg_path = project_ffmpeg
-		return true
-	# 3. ffmpeg.exe cạnh file game (bundle)
-	var game_dir: String = OS.get_executable_path().get_base_dir()
-	var bundled: String = game_dir.path_join("ffmpeg.exe")
-	if _try_exec.call(bundled):
-		_ffmpeg_path = bundled
-		return true
-	# 4. Đường dẫn từ config
-	if _try_exec.call(_ffmpeg_path):
-		return true
-	# 5. C:\ffmpeg\ffmpeg.exe (thư mục gốc, không có bin)
-	if _try_exec.call("C:\\ffmpeg\\ffmpeg.exe"):
-		_ffmpeg_path = "C:\\ffmpeg\\ffmpeg.exe"
-		return true
-	# 6. ffmpeg trong PATH
-	if OS.execute("ffmpeg", ["-version"], output, true) == 0:
-		_ffmpeg_path = "ffmpeg"
-		return true
-	# 7. Đường dẫn cứng C:\ffmpeg\bin
-	if _try_exec.call("C:\\ffmpeg\\bin\\ffmpeg.exe"):
-		_ffmpeg_path = "C:\\ffmpeg\\bin\\ffmpeg.exe"
-		return true
-	return false
-
-func _start_recording() -> void:
-	if _recording:
-		return
-
-	# Load lại config (lúc này GameManager đã có config thật)
-	_load_config()
-	# Kiểm tra lại FFmpeg với config mới
-	if not _check_ffmpeg():
-		push_error("[VideoRecorder] ❌ Không thể khởi động FFmpeg!")
-		push_error("[VideoRecorder]    Kiểm tra: %s" % _ffmpeg_path)
-		return
-	
-	# Tạo tên file theo timestamp
-	var timestamp: String = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
-	var output_dir: String = "D:\\Tai lieu kenh algodoo\\game-spiral-destruction\\output"
-	DirAccess.make_dir_recursive_absolute(output_dir)
-	_output_path = "%s\\gameplay_%s.mp4" % [output_dir, timestamp]
-	
-	# Lấy tên window game (set từ project.godot: config/name)
-	var window_title: String = ProjectSettings.get_setting("application/config/name", "game-spiral-destruction")
-
-	# Build command — tất cả path có spaces đều phải quote
-	var cmd_line: String = '"%s" -f gdigrab -framerate 60 -i "title=%s" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -y "%s"' % [_ffmpeg_path, window_title, _output_path]
-	print("[VideoRecorder] CMD: %s" % cmd_line)
-	var shell_args: PackedStringArray = ["/c", "start", "/B", "" , cmd_line]
-	_ffmpeg_pid = OS.execute("cmd", shell_args, [], false)
-
-	if _ffmpeg_pid > 0:
-		_recording = true
-		print("[VideoRecorder] ▶️ Ghi hình: %s" % _output_path)
-		_update_indicator_visible(true)
-		set_process(true)
-	else:
-		push_error("[VideoRecorder] ❌ Không thể khởi động FFmpeg!")
-		push_error("[VideoRecorder]    Kiểm tra: %s" % _ffmpeg_path)
-
-func _stop_recording() -> void:
-	if not _recording:
-		return
-	
-	# Kill FFmpeg bằng tên process (vì PID là của cmd.exe, không phải ffmpeg)
-	if DisplayServer.get_name() == "Windows":
-		OS.execute("taskkill", ["/IM", "ffmpeg.exe", "/F"], [], false)
-	elif _ffmpeg_pid > 0:
-		OS.kill(_ffmpeg_pid)
-	
-	_ffmpeg_pid = -1
-	_recording = false
-	print("[VideoRecorder] ⏹ Đã lưu video: %s" % _output_path)
-	_update_indicator_visible(false)
-	set_process(false)
-
-# ── Signal handlers ───────────────────────────────────────────────────────────
-
-func _on_simulation_started(_mode_id: String) -> void:
-	if not _enabled:
-		return
-	_start_recording()
-
-func _on_simulation_completed(_mode_id: String, _duration: float) -> void:
-	if not _enabled:
-		return
-	_stop_recording()
-
-func _exit_tree() -> void:
-	# Dọn dẹp khi scene bị huỷ
-	if _recording:
-		_stop_recording()
-
-# ── UI Indicator ──────────────────────────────────────────────────────────────
-
-func _create_indicator() -> void:
-	_indicator = CanvasLayer.new()
-	_indicator.name = "RecCanvas"
-	_indicator.layer = 100
-	
-	var container := Control.new()
-	container.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 10)
-	container.custom_minimum_size = Vector2(60, 20)
-	_indicator_container = container
-	
-	# Chấm đỏ
-	_indicator_dot = ColorRect.new()
-	_indicator_dot.color = Color(1.0, 0.1, 0.05, 0.9)
-	_indicator_dot.size = Vector2(10, 10)
-	_indicator_dot.position = Vector2(3, 5)
-	container.add_child(_indicator_dot)
-	
-	# Label REC
-	var label := Label.new()
-	label.text = "REC"
-	label.add_theme_color_override("font_color", Color.RED)
-	label.add_theme_font_size_override("font_size", 14)
-	label.position = Vector2(16, 2)
-	container.add_child(label)
-	
-	_indicator.add_child(container)
-	get_tree().root.add_child.call_deferred(_indicator)
-
-func _update_indicator_visible(visible: bool) -> void:
-	if is_instance_valid(_indicator):
-		_indicator.visible = visible
+	print("[VideoRecorder] %s" % message)

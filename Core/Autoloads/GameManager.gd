@@ -23,6 +23,7 @@ var current_state: State = State.IDLE
 var current_mode_id: String = ""
 var _simulation_start_time: float = 0.0
 var _current_config: Dictionary = {}
+var _start_requested: bool = false
 
 ## Reference đến SimulationContainer node trong GameScene
 var _simulation_container: Node2D = null
@@ -38,9 +39,10 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_SPACE:
-				# Space khi IDLE → bắt đầu game sau delay
-				if current_state == State.IDLE:
-					_start_with_delay()
+				# Space khi IDLE → bắt đầu game
+				if current_state == State.IDLE and not _start_requested:
+					_start_requested = true
+					_start_simulation_flow()
 			KEY_R:
 				# R khi đang chạy → reset
 				if current_state == State.RUNNING or current_state == State.COMPLETED:
@@ -85,6 +87,7 @@ func request_reset() -> void:
 		return
 
 	_set_state(State.RESETTING)
+	_start_requested = false
 	EventBus.simulation_reset.emit()
 
 	# Gọi reset() trên simulation hiện tại
@@ -100,7 +103,7 @@ func get_elapsed_time() -> float:
 		return 0.0
 	return (Time.get_ticks_msec() / 1000.0) - _simulation_start_time
 
-## Áp dụng cấu hình viewport từ config (màu nền, kích thước, v.v.)
+## Áp dụng cấu hình viewport từ config (màu nền, kích thước, fullscreen)
 func _apply_viewport_config(config: Dictionary) -> void:
 	var vp: Dictionary = config.get("viewport", {})
 	var bg_color_str: String = vp.get("background_color", "#000000")
@@ -115,6 +118,11 @@ func _apply_viewport_config(config: Dictionary) -> void:
 			# Bỏ qua resize nếu window đang ở embedded/editor mode
 			if DisplayServer.window_get_size() != Vector2i(w, h):
 				DisplayServer.window_set_size(Vector2i(w, h))
+	
+	# Fullscreen — chỉ khi chạy standalone (F5), không làm editor bị fullscreen
+	var fullscreen: bool = vp.get("fullscreen", false)
+	if fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 # ── Private ───────────────────────────────────────────────────────────────────
 
@@ -146,6 +154,7 @@ func _load_mode_scene(mode_id: String) -> void:
 		_current_simulation.setup()
 
 	_simulation_start_time = Time.get_ticks_msec() / 1000.0
+	_start_requested = false
 	_set_state(State.IDLE)
 	EventBus.simulation_ready.emit(mode_id)
 
@@ -155,15 +164,29 @@ func _on_simulation_completed(mode_id: String, duration: float) -> void:
 func _set_state(new_state: State) -> void:
 	current_state = new_state
 
-## Bắt đầu game sau delay (gọi khi nhấn R ở trạng thái IDLE)
-func _start_with_delay() -> void:
+## Tiến trình bắt đầu game: Kiểm tra OBS, ghi hình và quyết định delay
+func _start_simulation_flow() -> void:
 	if _current_simulation == null:
 		return
-	# Đọc start_delay từ config
-	var auto_test_cfg: Dictionary = _current_config.get("auto_test", {})
-	var trans_cfg: Dictionary = auto_test_cfg.get("transition", {})
-	var delay: float = trans_cfg.get("start_delay", 0.5)
-	
+
+	var has_obs: bool = false
+	var vr = get_node_or_null("/root/VideoRecorder")
+	if vr and vr.has_method("is_available"):
+		has_obs = await vr.is_available(1.0)
+
+	var delay: float = 0.0
+	if has_obs:
+		delay = 5.0
+		print("[GameManager] Đã phát hiện OBS đang chạy! Đang kích hoạt ghi hình OBS và hoãn game chạy sau 5 giây.")
+		# Gọi ghi hình OBS thông qua signal
+		EventBus.simulation_start_requested.emit(current_mode_id)
+	else:
+		# Không có OBS, lấy delay ngắn mặc định từ config để regrow/spawn animation chạy mượt
+		var auto_test_cfg: Dictionary = _current_config.get("auto_test", {})
+		var trans_cfg: Dictionary = auto_test_cfg.get("transition", {})
+		delay = trans_cfg.get("start_delay", 0.5)
+		print("[GameManager] Không phát hiện OBS. Game chạy ngay sau %.1f giây." % delay)
+
 	# Dùng tween để delay rồi start
 	var start_tween: Tween = create_tween()
 	start_tween.tween_interval(delay)

@@ -1,170 +1,177 @@
 {
   "$schema": "godot-mode-config-schema-v1",
   "meta": {
-    "mode_id": "spiral",
-    "name": "Spiral Destruction",
-    "version": "3.0",
-    "description": "Ball bounces through a narrowing spiral toward a center emoji. Auto-tests 5 ball sizes.",
-    "scene_path": "res://Modes/SpiralDestruction/SpiralMode.tscn"
+	"mode_id": "spiral",
+	"name": "Spiral Destruction",
+	"version": "3.0",
+	"description": "Ball bounces through a narrowing spiral toward a center emoji. Auto-tests 5 ball sizes.",
+	"scene_path": "res://Modes/SpiralDestruction/SpiralMode.tscn"
   },
 
   "viewport": {
-    "resolution": [1080, 1920],
-    "background_color": "#000000",
-    "camera_zoom": 0.9
+	"resolution": [1920, 1080],
+	"fullscreen": false,
+	"background_color": "#000000",
+	"camera_zoom": 0.4
   },
 
   "spiral": {
-    "center": [540.0, 960.0],
-    "gap_max": 110.0,
-    "gap_min": 35.0,
-    "turns": 7.0,
-    "points_per_turn": 120,
-    "stop_radius": 65.0,
-    "line_width": 8.0,
-    "line_color": [1.0, 1.0, 1.0, 0.8]
+	"center": [960.0, 540.0],
+	"gap_max": 110.0,
+	"gap_min": 35.0,
+	"turns": 7.0,
+	"points_per_turn": 120,
+	"stop_radius": 65.0,
+	"line_width": 8.0,
+	"line_color": [1.0, 1.0, 1.0, 0.8]
   },
 
   "triangles": {
-    "angle_step_deg": 11.25,
-    "side": 24.0,
-    "gap_from_wall": 0.0,
-    "collision_ratio": 0.25,
-    "min_size": 16.0,
-    "max_size": 100.0,
-    "size_ratio": 0.8,
-    "spacing_ratio": 1.15,
-    "color_hue_start": 0.8,
-    "color_hue_range": 1.0,
-    "skip_at_spawn": 3,
-    "skip_at_end": 2,
-    "stop_distance_from_center": 80.0,
-    "mesh": {
-      "outer_brightness": 2.5,
-      "inner_brightness": 0.3,
-      "inner_alpha": 0.9,
-      "hollow_scale": 0.7
-    },
-    "spawn_animation": {
-      "wave_duration": 0.35,
-      "scale_up_duration": 0.15,
-      "regrow_duration": 0.5
-    }
+	"angle_step_deg": 11.25,
+	"side": 24.0,
+	"gap_from_wall": 0.0,
+	"collision_ratio": 0.25,
+	"min_size": 5.0,
+	"max_size": 100.0,
+	"size_ratio": 0.8,
+	"spacing_ratio": 1.15,
+	"color_hue_start": 0.8,
+	"color_hue_range": 1.0,
+	"skip_at_spawn": 3,
+	"skip_at_end": 2,
+	"stop_distance_from_center": 80.0,
+	"mesh": {
+	  "outer_brightness": 2.5,
+	  "inner_brightness": 0.3,
+	  "inner_alpha": 0.9,
+	  "hollow_scale": 0.7
+	},
+	"spawn_animation": {
+	  "wave_duration": 0.35,
+	  "scale_up_duration": 0.15,
+	  "regrow_duration": 0.5
+	}
   },
 
   "ball": {
-    "initial_radius": 62.0,
-    "min_radius": 5.0,
-    "base_speed": 5000.0,
-    "shrink_per_bounce": 1.5,
-    "speed_escalation": {
-      "min_multiplier": 1.5,
-      "max_multiplier": 4.0
-    },
-    "trail_length": 5,
-    "win_distance": 30.0,
-    "color": [255, 100, 20],
-    "visual_segments": 16,
-    "spawn_offset": 20.0,
-    "spawn_target_offset": 40.0,
-    "glow": {
-      "enabled": true,
-      "radius_multiplier": 0.7,
-      "color": [255, 60, 10],
-      "alpha": 0.3,
-      "pulse_speed": 2.0,
-      "pulse_amplitude": 0.15
-    }
+	"initial_radius": 62.0,
+	"min_radius": 5.0,
+	"base_speed": 5000.0,
+	"shrink_per_bounce": 1.5,
+	"speed_escalation": {
+	  "min_multiplier": 1.5,
+	  "max_multiplier": 4.0
+	},
+	"trail_length": 5,
+	"win_distance": 30.0,
+	"color": [255, 100, 20],
+	"visual_segments": 16,
+	"spawn_offset": 20.0,
+	"spawn_target_offset": 40.0,
+	"glow": {
+	  "enabled": true,
+	  "radius_multiplier": 0.7,
+	  "color": [255, 60, 10],
+	  "alpha": 0.3,
+	  "pulse_speed": 2.0,
+	  "pulse_amplitude": 0.15
+	}
   },
 
   "auto_test": {
-    "enabled": true,
-    "timeout": 20.0,
-    "stuck_no_progress_seconds": 1.5,
-    "out_of_bounds_delay": 1.5,
-    "out_of_bounds_margin": 50.0,
-    "out_of_bounds_radius_factor": 1.5,
-    "transition": {
-      "start_delay": 0.5,
-      "flash_duration": 0.08,
-      "flash_count": 4,
-      "post_delay": 0.2
-    },
-    "tests": [
-      { "radius": 45.0, "speed": 800.0, "shrink": false },
-      { "radius": 40.0, "speed": 900.0, "shrink": false },
-      { "radius": 35.0, "speed": 950.0, "shrink": false },
-      { "radius": 30, "speed": 1000.0, "shrink": false },
-      { "radius": 25.0, "speed": 1100.0, "shrink": false }
-    ]
+	"enabled": true,
+	"timeout": 20.0,
+	"stuck_no_progress_seconds": 1.5,
+	"out_of_bounds_delay": 1.5,
+	"out_of_bounds_margin": 50.0,
+	"out_of_bounds_radius_factor": 1.5,
+	"transition": {
+	  "start_delay": 0.5,
+	  "flash_duration": 0.08,
+	  "flash_count": 4,
+	  "post_delay": 0.2
+	},
+	"tests": [
+	  { "radius": 45.0, "speed": 800.0, "shrink": false },
+	  { "radius": 40.0, "speed": 900.0, "shrink": false },
+	  { "radius": 35.0, "speed": 950.0, "shrink": false },
+	  { "radius": 30, "speed": 1000.0, "shrink": false },
+	  { "radius": 25.0, "speed": 1100.0, "shrink": false }
+	]
   },
 
   "debris": {
-    "pool_size": 64,
-    "lifetime": 1.2,
-    "gravity": 200.0,
-    "num_shards": 3,
-    "shard_sizes": [40.0, 60.0],
-    "launch_speed": [350.0, 900.0],
-    "rotation_speed": [-18.0, 18.0],
-    "num_burst_particles": 15
+	"pool_size": 64,
+	"lifetime": 1.2,
+	"gravity": 200.0,
+	"num_shards": 3,
+	"shard_sizes": [40.0, 60.0],
+	"launch_speed": [350.0, 900.0],
+	"rotation_speed": [-18.0, 18.0],
+	"num_burst_particles": 15
   },
 
   "win_effect": {
-    "emoji": "\uD83D\uDE0A",
-    "font_size": 100,
-    "emoji_size": [200, 200],
-    "celebration_emojis": ["\uD83D\uDE0A"],
-    "confetti_colors": [
-      [1.0, 0.2, 0.2], [0.2, 1.0, 0.2], [0.2, 0.2, 1.0],
-      [1.0, 1.0, 0.2], [1.0, 0.2, 1.0], [0.2, 1.0, 1.0], [1.0, 0.5, 0.0]
-    ],
-    "center_glow_burst": 8.0
+	"emoji": "\uD83D\uDE0A",
+	"font_size": 100,
+	"emoji_size": [200, 200],
+	"celebration_emojis": ["\uD83D\uDE0A"],
+	"confetti_colors": [
+	  [1.0, 0.2, 0.2], [0.2, 1.0, 0.2], [0.2, 0.2, 1.0],
+	  [1.0, 1.0, 0.2], [1.0, 0.2, 1.0], [0.2, 1.0, 1.0], [1.0, 0.5, 0.0]
+	],
+	"center_glow_burst": 8.0
   },
 
   "spatial_grid": {
-    "cell_size": 100.0
+	"cell_size": 100.0
   },
 
   "recording": {
-    "enabled": true,
-    "show_indicator": true,
-    "ffmpeg_path": "C:\\ffmpeg\\bin\\ffmpeg.exe"
+	"enabled": true,
+	"host": "192.168.1.15",
+	"port": 4455,
+	"password": "12345678",
+	"connect_timeout": 4.0,
+	"request_timeout": 4.0,
+	"auto_start": true,
+	"auto_stop": true,
+	"verbose": true
   },
 
   "audio": {
-    "pool_size": 16,
-    "pitch_initial": 1.0,
-    "pitch_increment": 0.03,
-    "pitch_min": 0.8,
-    "pitch_max": 2.5,
-    "pitch_reset_delay": 1.0,
-    "pitch_variation": 0.1,
-    "bounce_sound_path": "res://Audio/dry-fart.mp3",
-    "brick_sound_path": "res://Audio/glass-breaks-v1.mp3",
-    "fail_sound_path": "res://Audio/error-sonido (mp3cut.net).mp3",
-    "win_sound_path": "res://Audio/yeahoo.mp3",
-    "win_sound_secondary_path": "res://Audio/anime-wow-sound-effect (mp3cut.net).mp3"
+	"pool_size": 16,
+	"pitch_initial": 1.0,
+	"pitch_increment": 0.03,
+	"pitch_min": 0.8,
+	"pitch_max": 2.5,
+	"pitch_reset_delay": 1.0,
+	"pitch_variation": 0.1,
+	"bounce_sound_path": "res://Audio/dry-fart.mp3",
+	"brick_sound_path": "res://Audio/glass-breaks-v1.mp3",
+	"fail_sound_path": "res://Audio/error-sonido (mp3cut.net).mp3",
+	"win_sound_path": "res://Audio/yeahoo.mp3",
+	"win_sound_secondary_path": "res://Audio/anime-wow-sound-effect (mp3cut.net).mp3"
   },
 
   "hud": {
-    "title": "WILL THE BALLS GET TO CENTER",
-    "title_font_size": 64,
-    "title_color": "#FF0000",
-    "title_outline_color": "#FFFFFF",
-    "title_outline_size": 20,
-    "info_font_size": 32,
-    "size_meter": {
-      "position": [955, 130],
-      "size": [24, 350],
-      "radius_min": 15.0,
-      "radius_max": 62.0,
-      "border_width": 3
-    },
-    "spawn_line": {
-      "position": [950, 450],
-      "length": 50,
-      "color": "#FFFFFF"
-    }
+	"title": "WILL THE BALLS GET TO CENTER",
+	"title_font_size": 32,
+	"title_color": "#FF0000",
+	"title_outline_color": "#FFFFFF",
+	"title_outline_size": 8,
+	"info_font_size": 16,
+	"size_meter": {
+	  "position": [955, 130],
+	  "size": [24, 350],
+	  "radius_min": 15.0,
+	  "radius_max": 62.0,
+	  "border_width": 3
+	},
+	"spawn_line": {
+	  "position": [950, 450],
+	  "length": 50,
+	  "color": "#FFFFFF"
+	}
   }
 }

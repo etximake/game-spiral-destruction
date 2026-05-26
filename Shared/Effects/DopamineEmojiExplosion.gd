@@ -4,7 +4,7 @@
 extends Node2D
 
 # ── Config ────────────────────────────────────────────────────────────────────
-var _spiral_center := Vector2(540.0, 960.0)
+var _spiral_center := Vector2(960.0, 540.0)
 var _emoji_char: String = "\uD83D\uDE0A"
 var _emoji_size_min: float = 60.0
 var _emoji_size_max: float = 200.0
@@ -35,7 +35,7 @@ func _load_config() -> void:
 		var cfg: Dictionary = gm.get_current_config()
 		var we: Dictionary = cfg.get("win_effect", {})
 		var sc: Dictionary = cfg.get("spiral", {})
-		var center_arr: Array = sc.get("center", [540.0, 960.0])
+		var center_arr: Array = sc.get("center", [960.0, 540.0])
 		_spiral_center = Vector2(center_arr[0], center_arr[1])
 		_emoji_char = we.get("emoji", _emoji_char)
 		var size_arr: Array = we.get("emoji_size", [200, 200])
@@ -51,9 +51,10 @@ func _init_pool() -> void:
 
 	var viewport_size: Vector2 = get_viewport_rect().size
 	if viewport_size == Vector2.ZERO:
-		viewport_size = Vector2(1080, 1920)
-	# Bán kính spiral phủ vừa màn hình
-	var max_radius: float = viewport_size.length() * 0.45
+		viewport_size = Vector2(1920, 1080)
+	# Keep the explosion inside the 9:16 vertical viewport
+	var target_width = viewport_size.y * 9.0 / 16.0
+	var max_radius: float = (target_width * 0.5) - (_emoji_size_max * 0.5)
 
 	# Chia emoji thành 5 nhóm kích thước để dùng chung LabelSettings
 	var size_groups: Array[Dictionary] = [

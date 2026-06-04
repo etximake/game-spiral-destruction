@@ -478,7 +478,9 @@ func _create_end_emoji() -> void:
 	if is_instance_valid(_emoji_label):
 		_emoji_label.queue_free()
 	
-	var emoji_char: String = _win_effect_cfg.get("emoji", "\uD83D\uDE0A")
+	# Phase 1: Ưu tiên content.target_emoji, fallback về win_effect.emoji
+	var content_cfg: Dictionary = _config.get("content", {})
+	var emoji_char: String = content_cfg.get("target_emoji", _win_effect_cfg.get("emoji", "\uD83D\uDE0A"))
 	var font_size: int = _win_effect_cfg.get("font_size", 80)
 	var emoji_size: Array = _win_effect_cfg.get("emoji_size", [160, 160])
 	

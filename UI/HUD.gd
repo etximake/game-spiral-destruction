@@ -14,6 +14,10 @@ var _destroyed_count: int = 0
 var _elapsed_time: float = 0.0
 var _is_running: bool = false
 var _current_radius: float = 62.0
+var _record_mode: bool = false
+
+# ── Record indicator ──────────────────────────────────────────────────────────
+var _label_record: Label = null
 
 # ── Config (load từ GameManager) ──────────────────────────────────────────────
 var _hud_title: String = "WILL THE BALLS GET TO CENTER"
@@ -34,6 +38,7 @@ var _spawn_line_color: Color = Color.WHITE
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	_create_labels()
+	_create_record_indicator()
 	_connect_signals()
 	set_process_internal(true)
 	# Deferred: load config sau khi GameScene._ready() gọi start_mode()
@@ -58,7 +63,11 @@ func _on_hud_update_requested(key: String, value: Variant) -> void:
 			_destroyed_count = int(value)
 		"radius":
 			_current_radius = float(value)
-	
+		"record_mode":
+			_record_mode = bool(value)
+			if _label_record:
+				_label_record.visible = _record_mode
+
 	_update_bottom_label()
 
 func _on_ball_radius_changed(new_radius: float) -> void:
@@ -147,6 +156,32 @@ func _connect_signals() -> void:
 	_event_bus.simulation_completed.connect(_on_simulation_completed)
 	_event_bus.simulation_reset.connect(_on_simulation_reset)
 
+## Tạo label indicator chế độ quay video (góc trên phải)
+func _create_record_indicator() -> void:
+	_label_record = Label.new()
+	_label_record.text = "🎥 REC"
+	_label_record.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_label_record.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_label_record.anchor_left = 0.5
+	_label_record.anchor_right = 1.0
+	_label_record.anchor_top = 0.0
+	_label_record.anchor_bottom = 0.0
+	_label_record.offset_left = -20.0
+	_label_record.offset_right = -30.0
+	_label_record.offset_top = 30.0
+	_label_record.offset_bottom = 80.0
+	
+	var font: Font = load("res://font/Anton-Regular.ttf")
+	var settings := LabelSettings.new()
+	settings.font = font
+	settings.font_size = 36
+	settings.font_color = Color.RED
+	settings.outline_color = Color(0.0, 0.0, 0.0, 0.9)
+	settings.outline_size = 3
+	_label_record.label_settings = settings
+	_label_record.visible = false
+	add_child(_label_record)
+
 ## Đọc cấu hình HUD từ GameManager (config-driven)
 ## Được gọi deferred để đảm bảo start_mode() đã load config xong
 func _load_hud_config() -> void:
@@ -155,10 +190,12 @@ func _load_hud_config() -> void:
 		return
 	var cfg: Dictionary = gm.get_current_config()
 	var hud_cfg: Dictionary = cfg.get("hud", {})
-	if hud_cfg.is_empty():
-		return  # Config chưa sẵn sàng, bỏ qua
 	
-	_hud_title = hud_cfg.get("title", _hud_title)
+	# Phase 1: Ưu tiên content.title, fallback về hud.title
+	var content_cfg: Dictionary = cfg.get("content", {})
+	_hud_title = content_cfg.get("title", hud_cfg.get("title", _hud_title))
+	if hud_cfg.is_empty() and content_cfg.is_empty():
+		return  # Config chưa sẵn sàng, bỏ qua
 	_hud_title_font_size = hud_cfg.get("title_font_size", _hud_title_font_size)
 	_hud_info_font_size = hud_cfg.get("info_font_size", _hud_info_font_size)
 	

@@ -24,6 +24,8 @@ var current_mode_id: String = ""
 var _simulation_start_time: float = 0.0
 var _current_config: Dictionary = {}
 var _start_requested: bool = false
+## Người dùng nhấn A để bật/tắt chế độ quay video
+var _record_mode_requested: bool = false
 
 ## Reference đến SimulationContainer node trong GameScene
 var _simulation_container: Node2D = null
@@ -38,6 +40,13 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
+			KEY_A:
+				# A khi IDLE → bật/tắt chế độ quay video
+				if current_state == State.IDLE:
+					_record_mode_requested = not _record_mode_requested
+					var msg: String = "[GameManager] Chế độ quay video: " + ("BẬT 🎥" if _record_mode_requested else "TẮT")
+					print(msg)
+					EventBus.hud_update_requested.emit("record_mode", _record_mode_requested)
 			KEY_SPACE:
 				# Space khi IDLE → bắt đầu game
 				if current_state == State.IDLE and not _start_requested:
@@ -54,16 +63,30 @@ func _input(event: InputEvent) -> void:
 func initialize(simulation_container: Node2D) -> void:
 	_simulation_container = simulation_container
 
-## Load và bắt đầu một mode theo ID
-func start_mode(mode_id: String) -> void:
+## Load và bắt đầu một mode theo ID, với optional variant.
+## variant_id: tên file variant (không có .json) trong variants/ thư mục của mode.
+func start_mode(mode_id: String, variant_id: String = "") -> void:
 	if not MODE_CONFIG_REGISTRY.has(mode_id):
 		push_error("GameManager: mode_id '%s' không tồn tại trong registry" % mode_id)
 		return
 
 	current_mode_id = mode_id
 	
-	# Load config từ JSON
-	var config_path: String = MODE_CONFIG_REGISTRY[mode_id]
+	# Phase 5: Nếu có variant_id, load từ variants/ thư mục
+	var config_path: String
+	if not variant_id.is_empty():
+		# Derive variant path: thay config.json → variants/{variant_id}.json
+		var base_path: String = MODE_CONFIG_REGISTRY[mode_id]
+		var dir: String = base_path.get_base_dir()
+		config_path = dir + "/variants/" + variant_id + ".json"
+		if not FileAccess.file_exists(config_path):
+			push_warning("GameManager: variant '%s' not found at '%s', falling back to default config." % [variant_id, config_path])
+			config_path = MODE_CONFIG_REGISTRY[mode_id]
+		else:
+			print("[GameManager] Loading variant: %s from %s" % [variant_id, config_path])
+	else:
+		config_path = MODE_CONFIG_REGISTRY[mode_id]
+	
 	var loader_script = load("res://Core/Base/ModeConfigLoader.gd")
 	var loader = loader_script.new() as Object
 	_current_config = loader.load_config(config_path)
@@ -71,6 +94,13 @@ func start_mode(mode_id: String) -> void:
 	if _current_config.is_empty():
 		push_error("GameManager: Lỗi load config cho mode '%s': %s" % [mode_id, loader.last_error])
 		return
+	
+	# Phase 5: Inject variant_id vào config nếu chưa có
+	if not variant_id.is_empty():
+		var content_cfg: Dictionary = _current_config.get("content", {})
+		if content_cfg.get("variant_id", "") == "":
+			content_cfg["variant_id"] = variant_id
+			_current_config["content"] = content_cfg
 	
 	# Áp dụng viewport settings từ config
 	_apply_viewport_config(_current_config)
@@ -174,28 +204,22 @@ func _on_simulation_completed(mode_id: String, duration: float) -> void:
 func _set_state(new_state: State) -> void:
 	current_state = new_state
 
-## Tiến trình bắt đầu game: Kiểm tra FFmpeg, ghi hình và quyết định delay
+## Tiến trình bắt đầu game: Dùng flag record_mode thay vì tự động dò FFmpeg
 func _start_simulation_flow() -> void:
 	if _current_simulation == null:
 		return
 
-	var recording_active: bool = false
-	var vr = get_node_or_null("/root/VideoRecorder")
-	if vr and vr.has_method("is_available"):
-		recording_active = await vr.is_available(1.0)
-
 	var delay: float = 0.0
-	if recording_active:
+	if _record_mode_requested:
 		delay = 1.5
-		print("[GameManager] Đang kích hoạt tự động quay video bằng FFmpeg. Trò chơi sẽ bắt đầu sau %.1f giây." % delay)
-		# Gọi ghi hình thông qua signal
+		print("[GameManager] Đang kích hoạt quay video bằng FFmpeg. Trò chơi sẽ bắt đầu sau %.1f giây." % delay)
 		EventBus.simulation_start_requested.emit(current_mode_id)
 	else:
-		# Không ghi hình, lấy delay ngắn mặc định từ config để regrow/spawn animation chạy mượt
+		# Không ghi hình, delay ngắn để regrow/spawn animation chạy mượt
 		var auto_test_cfg: Dictionary = _current_config.get("auto_test", {})
 		var trans_cfg: Dictionary = auto_test_cfg.get("transition", {})
 		delay = trans_cfg.get("start_delay", 0.5)
-		print("[GameManager] Tự động quay video bị tắt. Game chạy ngay sau %.1f giây." % delay)
+		print("[GameManager] Chạy debug không quay video. Game bắt đầu sau %.1f giây." % delay)
 
 	# Dùng tween để delay rồi start
 	var start_tween: Tween = create_tween()

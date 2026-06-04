@@ -17,8 +17,9 @@ File cấu hình: `../config.json`
 - [7. Spatial Grid — Grid không gian](#7-spatial-grid--grid-không-gian-hiệu-suất)
 - [8. Win effect — Hiệu ứng chiến thắng](#8-win-effect--hiệu-ứng-chiến-thắng)
 - [9. Audio — Âm thanh](#9-audio--âm-thanh)
-- [10. HUD — Giao diện](#10-hud--giao-diện)
-- [11. Bảng tra nhanh — Muốn chỉnh X thì sửa đâu?](#11-bảng-tra-nhanh--muốn-chỉnh-x-thì-sửa-đâu)
+- [10. Recording — Ghi hình video](#10-recording--ghi-hình-video)
+- [11. HUD — Giao diện](#11-hud--giao-diện)
+- [12. Bảng tra nhanh — Muốn chỉnh X thì sửa đâu?](#12-bảng-tra-nhanh--muốn-chỉnh-x-thì-sửa-đâu)
 
 ---
 
@@ -375,7 +376,90 @@ Grid chia scene thành các ô vuông để tối ưu collision detection (O(1) 
 
 ---
 
-## 10. HUD — Giao diện
+## 10. Recording — Ghi hình video
+
+```json
+"recording": {
+  "enabled": true,
+  "record_audio": true,
+  "output_path": "res://recordings/spiral_destruction.mp4",
+  "ffmpeg_path": "res://ffmpeg/bin/ffmpeg.exe",
+  "fps": 60,
+  "scale_factor": 1.0,
+  "preset": "ultrafast",
+  "crf": 23,
+  "auto_start": true,
+  "auto_stop": true,
+  "verbose": true
+}
+```
+
+### Cách active chế độ ghi hình
+
+Có **2 cách** để ghi hình video:
+
+#### Cách 1: Record Mode (Trong game — khuyên dùng)
+
+1. **Nhấn phím A** — Bật record mode. HUD sẽ hiện 🎥 REC ở góc trên phải.
+2. **Nhấn Space** — Bắt đầu simulation. Game tự động chạy + FFmpeg ghi hình.
+3. Chờ simulation hoàn thành (WIN hoặc hết test) — Video tự động lưu tại `output_path`.
+
+> 💡 **Mẹo**: Dùng cách này khi bạn muốn ***chạy debug trước*** (không ghi hình), xem ưng ý rồi mới bấm A để record.
+
+#### Cách 2: Auto-start (Debug nhanh)
+
+Set `"auto_start": true` và `"auto_stop": true` trong config. Khi nhấn **Space**, game tự động ghi và kết thúc mà không cần bấm gì thêm.
+
+> ⚠️ **Lưu ý**: Cách này không cho bạn cơ hội kiểm tra trước — bấm Space là ghi ngay.
+
+### Các tham số
+
+| Bạn muốn... | Chỉnh |
+|---|---|
+| **Bật/tắt ghi hình** | `enabled` — `true` = cho phép ghi, `false` = tắt hẳn |
+| **Tự động ghi khi chạy** | `auto_start` — `true` = ghi ngay khi simulation chạy |
+| **Tự động dừng khi xong** | `auto_stop` — `true` = tự dừng khi WIN/hết test |
+| **Đổi tên file output** | `output_path` — đường dẫn lưu video. Vd: `"res://recordings/my_video.mp4"` |
+| **Chất lượng video** | `crf` — **thấp hơn** = chất lượng cao hơn (18 = lossless gần như, 28 = thấp). Mặc định 23. |
+| **Tốc độ encode** | `preset` — `"ultrafast"` (nhanh nhất), `"fast"`, `"medium"`, `"slow"` (chất lượng cao nhất) |
+| **FPS** | `fps` — 60 (mượt) hoặc 30 (nhẹ hơn, dung lượng nhỏ hơn) |
+| **Scale factor** | `scale_factor` — `1.0` = 1080p, `0.5` = 540p (nhẹ hơn), `2.0` = 4K (nếu dùng HD texture) |
+| **Ghi âm thanh** | `record_audio` — `true` = có âm thanh, `false` = chỉ hình |
+| **Log chi tiết FFmpeg** | `verbose` — `true` = in log FFmpeg ra console để debug |
+
+### Luồng hoạt động
+
+```
+[User nhấn Space]
+  │
+  ├─ GameManager kiểm tra _record_mode_requested
+  │   ├─ Nếu KHÔNG record → chạy simulation bình thường (debug)
+  │   └─ Nếu CÓ record → emit simulation_start_requested
+  │
+  ├─ GameScene khởi tạo VideoRecorder
+  │   ├─ Gọi FFmpeg pipe (từ ffmpeg_path)
+  │   └─ Ghi từng frame từ Viewport → pipe FFmpeg
+  │
+  ├─ Simulation chạy...
+  │
+  └─ Khi kết thúc (WIN/ALL_DONE)
+      ├─ VideoRecorder dừng pipe
+      └─ File MP4 lưu tại output_path
+```
+
+### Cấu hình FFmpeg
+
+FFmpeg binary được đóng gói trong project tại `res://ffmpeg/bin/ffmpeg.exe`. Nếu bạn muốn dùng FFmpeg từ hệ thống:
+
+```json
+"ffmpeg_path": "C:/ffmpeg/bin/ffmpeg.exe"
+```
+
+> 💡 **Yêu cầu**: FFmpeg phải hỗ trợ `-f rawvideo -pix_fmt bgra` (định dạng đầu ra của Godot Viewport).
+
+---
+
+## 11. HUD — Giao diện
 
 ```json
 "hud": {
@@ -407,7 +491,7 @@ Grid chia scene thành các ô vuông để tối ưu collision detection (O(1) 
 
 ---
 
-## 11. Bảng tra nhanh — Muốn chỉnh X thì sửa đâu?
+## 12. Bảng tra nhanh — Muốn chỉnh X thì sửa đâu?
 
 | Hiệu ứng mong muốn | Config key (đường dẫn) |
 |---|---|
@@ -434,6 +518,12 @@ Grid chia scene thành các ô vuông để tối ưu collision detection (O(1) 
 | 💥 **Burst particles** | `debris.num_burst_particles` |
 | 🎉 **Emoji đích** | `win_effect.emoji` |
 | 🔊 **Âm thanh cao/thấp** | `audio.pitch_increment`, `audio.pitch_max` |
+| 🎥 **Ghi hình video** | `recording.enabled`, `recording.auto_start` |
+| 🎥 **Chất lượng video** | `recording.crf` (thấp = chất lượng cao) |
+| 🎥 **Tốc độ encode** | `recording.preset` (ultrafast → slow) |
+| 🎥 **FPS ghi hình** | `recording.fps` |
+| 🎥 **Đường dẫn FFmpeg** | `recording.ffmpeg_path` |
+| 🎥 **Tên file output** | `recording.output_path` |
 | 📺 **Thu/phóng camera** | `viewport.camera_zoom` |
 | 📝 **Tiêu đề HUD** | `hud.title`, `hud.title_color`, `hud.title_outline_color` |
 | 📐 **Collision grid** | `spatial_grid.cell_size` |

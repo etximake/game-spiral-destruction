@@ -1,0 +1,198 @@
+{
+  "$schema": "godot-mode-config-schema-v1",
+  "meta": {
+    "mode_id": "spiral",
+    "name": "Spiral Destruction — Pizza Soccer Circle",
+    "version": "3.1",
+    "description": "Soccer variant: soccer ball sprite, circle obstacles, pizza target emoji.",
+    "scene_path": "res://Modes/SpiralDestruction/SpiralMode.tscn"
+  },
+
+  "content": {
+    "variant_id": "pizza_soccer_circle",
+    "title": "CAN THE SOCCER BALL GET THE PIZZA?",
+    "target_emoji": "\uD83C\uDF55",
+    "description": "A soccer ball tries to reach the pizza through circle-shaped obstacles."
+  },
+
+  "viewport": {
+    "resolution": [1080, 1920],
+    "fullscreen": false,
+    "background_color": "#000000",
+    "camera_zoom": 0.9
+  },
+
+  "spiral": {
+    "center": [540.0, 960.0],
+    "gap_max": 110.0,
+    "gap_min": 35.0,
+    "turns": 7.0,
+    "points_per_turn": 120,
+    "stop_radius": 65.0,
+    "line_width": 8.0,
+    "line_color": [1.0, 1.0, 1.0, 0.8]
+  },
+
+  "triangles": {
+    "shape": "circle",
+    "fill_style": "wall_attached",
+    "angle_step_deg": 11.25,
+    "side": 24.0,
+    "gap_from_wall": 0.0,
+    "collision_ratio": 0.25,
+    "min_size": 5.0,
+    "max_size": 100.0,
+    "size_ratio": 0.8,
+    "spacing_ratio": 1.12,
+    "color_hue_start": 0.6,
+    "color_hue_range": 1.2,
+    "skip_at_spawn": 3,
+    "skip_at_end": 2,
+    "stop_distance_from_center": 80.0,
+    "mesh": {
+      "outer_brightness": 2.2,
+      "inner_brightness": 0.3,
+      "inner_alpha": 0.9,
+      "hollow_scale": 0.5,
+      "circle_segments": 24
+    },
+    "spawn_animation": {
+      "wave_duration": 0.35,
+      "scale_up_duration": 0.15,
+      "regrow_duration": 0.5
+    }
+  },
+
+  "ball": {
+    "initial_radius": 50.0,
+    "min_radius": 5.0,
+    "base_speed": 800.0,
+    "shrink_per_bounce": 1.5,
+    "speed_escalation": {
+      "min_multiplier": 1.5,
+      "max_multiplier": 4.0
+    },
+    "trail_length": 5,
+    "win_distance": 30.0,
+    "color": [255, 255, 255],
+    "visual_segments": 16,
+    "spawn_offset": 20.0,
+    "spawn_target_offset": 40.0,
+    "visual": {
+      "type": "sprite",
+      "sprite_path": "res://Assets/BallSkins/soccer_ball.png",
+      "scale_to_radius": true,
+      "rotation_enabled": true,
+      "rotation_speed_multiplier": 1.2,
+      "flip_with_velocity": false,
+      "fallback_to_mesh": true
+    },
+    "glow": {
+      "enabled": true,
+      "radius_multiplier": 0.7,
+      "color": [200, 200, 200],
+      "alpha": 0.25,
+      "pulse_speed": 2.0,
+      "pulse_amplitude": 0.15
+    }
+  },
+
+  "auto_test": {
+    "enabled": true,
+    "timeout": 20.0,
+    "stuck_no_progress_seconds": 1.5,
+    "out_of_bounds_delay": 1.5,
+    "out_of_bounds_margin": 50.0,
+    "out_of_bounds_radius_factor": 1.5,
+    "transition": {
+      "start_delay": 0.5,
+      "flash_duration": 0.08,
+      "flash_count": 4,
+      "post_delay": 0.2
+    },
+    "tests": [
+      { "radius": 38.0, "speed": 850.0, "shrink": false },
+      { "radius": 32.0, "speed": 920.0, "shrink": false },
+      { "radius": 26.0, "speed": 1000.0, "shrink": false },
+      { "radius": 20.0, "speed": 1100.0, "shrink": false },
+      { "radius": 12.0, "speed": 1200.0, "shrink": false }
+    ]
+  },
+
+  "debris": {
+    "pool_size": 64,
+    "lifetime": 1.2,
+    "gravity": 200.0,
+    "num_shards": 3,
+    "shard_sizes": [35.0, 55.0],
+    "launch_speed": [350.0, 900.0],
+    "rotation_speed": [-18.0, 18.0],
+    "num_burst_particles": 15
+  },
+
+  "win_effect": {
+    "emoji": "\uD83C\uDF55",
+    "font_size": 100,
+    "emoji_size": [200, 200],
+    "celebration_emojis": ["\uD83C\uDF55", "\uD83C\uDFC6", "\u2B50", "\uD83C\uDF89", "\uD83C\uDF7D\uFE0F"],
+    "confetti_colors": [
+      [1.0, 0.8, 0.2], [0.2, 1.0, 0.2], [1.0, 0.6, 0.0],
+      [0.2, 0.8, 1.0], [1.0, 0.2, 0.2], [0.8, 0.2, 1.0], [0.2, 1.0, 0.8]
+    ],
+    "center_glow_burst": 8.0
+  },
+
+  "spatial_grid": {
+    "cell_size": 100.0
+  },
+
+  "recording": {
+    "enabled": true,
+    "record_audio": true,
+    "output_path": "res://recordings/spiral_pizza_soccer_circle.mp4",
+    "ffmpeg_path": "res://ffmpeg/bin/ffmpeg.exe",
+    "fps": 60,
+    "scale_factor": 1.0,
+    "preset": "ultrafast",
+    "crf": 23,
+    "auto_start": true,
+    "auto_stop": true,
+    "verbose": true
+  },
+
+  "audio": {
+    "pool_size": 16,
+    "pitch_initial": 1.0,
+    "pitch_increment": 0.03,
+    "pitch_min": 0.8,
+    "pitch_max": 2.5,
+    "pitch_reset_delay": 1.0,
+    "pitch_variation": 0.1,
+    "bounce_sound_path": "res://Audio/dry-fart.mp3",
+    "brick_sound_path": "res://Audio/glass-breaks-v1.mp3",
+    "fail_sound_path": "res://Audio/error-sonido (mp3cut.net).mp3",
+    "win_sound_path": "res://Audio/yeahoo.mp3",
+    "win_sound_secondary_path": "res://Audio/anime-wow-sound-effect (mp3cut.net).mp3"
+  },
+
+  "hud": {
+    "title": "CAN THE SOCCER BALL GET THE PIZZA?",
+    "title_font_size": 64,
+    "title_color": "#FF8800",
+    "title_outline_color": "#FFFFFF",
+    "title_outline_size": 20,
+    "info_font_size": 32,
+    "size_meter": {
+      "position": [955, 130],
+      "size": [24, 350],
+      "radius_min": 15.0,
+      "radius_max": 50.0,
+      "border_width": 3
+    },
+    "spawn_line": {
+      "position": [950, 450],
+      "length": 50,
+      "color": "#FFFFFF"
+    }
+  }
+}

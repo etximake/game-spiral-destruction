@@ -18,6 +18,15 @@ func set_ball_config(ball_cfg: Dictionary, spiral_cfg: Dictionary) -> void:
 	if glow != null and GLOW_ENABLED:
 		_setup_glow()
 	
+	# Phase 2: Parse visual config
+	_visual_cfg = ball_cfg.get("visual", {})
+	_visual_type = _visual_cfg.get("type", "mesh")
+	_sprite_rotation_enabled = _visual_cfg.get("rotation_enabled", false)
+	_sprite_rotation_multiplier = _visual_cfg.get("rotation_speed_multiplier", 1.0)
+	_flip_with_velocity = _visual_cfg.get("flip_with_velocity", false)
+	if sprite_visual != null:
+		_apply_visual_config()
+	
 	# Quan trọng: resize trail buffers theo config (ready() dùng fallback)
 	var new_len: int = TRAIL_LENGTH
 	if _trail_buffer.size() != new_len:
@@ -115,11 +124,10 @@ var velocity: Vector2 = Vector2.ZERO     # Vector vận tốc hiện tại
 var radius: float = INITIAL_RADIUS:      # Bán kính hiện tại
 	set(value):
 		radius = value
-		if visual != null:
-			var scale_factor: float = radius / INITIAL_RADIUS
-			visual.scale = Vector2(scale_factor, scale_factor)
 		if trail != null:
 			trail.width = radius * 2.0
+		# Phase 2: Update visual scale (cả mesh và sprite)
+		_update_visual_scale()
 
 var active: bool = false                 # Chỉ xử lý physics khi active = true
 var shrink_enabled: bool = true          # Cho phép co nhỏ (sẽ tắt khi chạy auto-test)
@@ -129,6 +137,7 @@ var ball_speed: float = BALL_SPEED       # Tốc độ di chuyển hiện tại
 @onready var visual: MeshInstance2D = $BallVisual
 @onready var trail: Line2D = $Trail
 @onready var glow: MeshInstance2D = $BallGlow
+var sprite_visual: Sprite2D = null  # Phase 2: optional sprite skin
 
 ## Reference đến SpiralMapController — gán từ SpiralMode sau khi setup
 var map_controller: Node = null
@@ -145,6 +154,14 @@ var _win_triggered: bool = false
 var _current_active_speed: float = BALL_SPEED
 var _is_wedged: bool = false
 
+# ── Phase 2: Sprite visual ────────────────────────────────────────────────────
+var _visual_cfg: Dictionary = {}
+var _visual_type: String = "mesh"
+var _sprite_rotation_enabled: bool = false
+var _sprite_rotation_multiplier: float = 1.0
+var _flip_with_velocity: bool = false
+var _distance_traveled_for_rotation: float = 0.0
+
 # ── Trail buffer (pre-allocated, zero GC) ─────────────────────────────────────
 ## _trail_ordered reuse array để tránh allocation mỗi frame
 var _trail_ordered: PackedVector2Array = PackedVector2Array()
@@ -159,6 +176,13 @@ func _ready() -> void:
 
 	# Setup visual mesh (hình tròn xấp xỉ bằng polygon)
 	_setup_visual()
+
+	# Phase 2: Tạo Sprite2D một lần — chỉ dùng nếu config yêu cầu sprite
+	sprite_visual = Sprite2D.new()
+	sprite_visual.name = "BallSprite"
+	sprite_visual.visible = false
+	sprite_visual.centered = true
+	add_child(sprite_visual)
 
 	# Setup glow halo
 	if GLOW_ENABLED:
@@ -176,6 +200,10 @@ func _ready() -> void:
 
 	# Enable glow pulse processing
 	set_process(GLOW_ENABLED)
+	
+	# Phase 2: Re-apply visual config in case set_ball_config() ran before _ready()
+	if not _ball_cfg.is_empty():
+		_apply_visual_config()
 
 func _physics_process(delta: float) -> void:
 	if not active or _win_triggered:
@@ -206,6 +234,16 @@ func _physics_process(delta: float) -> void:
 
 	# CCD: chia frame thành nhiều bước nhỏ
 	_move_with_ccd(delta)
+
+	# Phase 2: Sprite rotation (visual only, không ảnh hưởng physics)
+	if _visual_type == "sprite" and sprite_visual != null and _sprite_rotation_enabled:
+		var distance_this_frame: float = velocity.length() * delta
+		_distance_traveled_for_rotation += distance_this_frame
+		sprite_visual.rotation = _distance_traveled_for_rotation / max(radius, 1.0) * _sprite_rotation_multiplier
+	
+	# Phase 2: Flip sprite theo hướng di chuyển nếu flip_with_velocity = true
+	if _visual_type == "sprite" and sprite_visual != null and _flip_with_velocity:
+		sprite_visual.flip_h = velocity.x > 0.0
 
 	# Cập nhật trail
 	_update_trail()
@@ -251,6 +289,11 @@ func reset() -> void:
 	if GLOW_ENABLED and is_instance_valid(glow):
 		_glow_time = 0.0
 		glow.modulate = Color(GLOW_COLOR.r, GLOW_COLOR.g, GLOW_COLOR.b, GLOW_ALPHA)
+	
+	# Phase 2: Reset sprite rotation
+	_distance_traveled_for_rotation = 0.0
+	if sprite_visual != null:
+		sprite_visual.rotation = 0.0
 
 ## Reset lại hoàn toàn trail tại vị trí hiện tại
 func reset_trail() -> void:
@@ -580,3 +623,54 @@ func _process(delta: float) -> void:
 	# Pulse: dao động alpha theo sin
 	var pulse: float = 1.0 + sin(_glow_time * GLOW_PULSE_SPEED) * GLOW_PULSE_AMP
 	glow.modulate = Color(GLOW_COLOR.r, GLOW_COLOR.g, GLOW_COLOR.b, GLOW_ALPHA * pulse)
+
+# ── Phase 2: Sprite Visual ────────────────────────────────────────────────────
+
+## Áp dụng visual config: load sprite nếu type="sprite", fallback về mesh nếu lỗi.
+func _apply_visual_config() -> void:
+	var fallback_to_mesh: bool = _visual_cfg.get("fallback_to_mesh", true)
+	
+	if _visual_type == "sprite":
+		var sprite_path: String = _visual_cfg.get("sprite_path", "")
+		if not sprite_path.is_empty():
+			var texture: Texture2D = load(sprite_path) as Texture2D
+			if texture != null:
+				sprite_visual.texture = texture
+				sprite_visual.visible = true
+				visual.visible = false
+				_update_visual_scale()
+				return
+			else:
+				if fallback_to_mesh:
+					push_warning("[Ball] Cannot load sprite '%s', falling back to mesh." % sprite_path)
+				else:
+					push_warning("[Ball] Cannot load sprite '%s'." % sprite_path)
+		elif fallback_to_mesh:
+			push_warning("[Ball] sprite_path is empty, falling back to mesh.")
+	
+	# Fallback: use mesh visual
+	_visual_type = "mesh"
+	sprite_visual.visible = false
+	visual.visible = true
+
+## Cập nhật scale của visual (cả mesh và sprite) theo radius hiện tại.
+## Mesh luon scale theo radius/INITIAL_RADIUS.
+## Sprite chi scale neu scale_to_radius = true (default).
+func _update_visual_scale() -> void:
+	# Mesh visual always scales with radius
+	if visual != null:
+		var scale_factor: float = radius / INITIAL_RADIUS
+		visual.scale = Vector2(scale_factor, scale_factor)
+	
+	# Sprite visual: chi scale neu scale_to_radius = true
+	if _visual_type != "sprite" or sprite_visual == null or sprite_visual.texture == null:
+		return
+	
+	var scale_to_radius: bool = _visual_cfg.get("scale_to_radius", true)
+	if scale_to_radius:
+		var tex_size: Vector2 = sprite_visual.texture.get_size()
+		var target_diameter: float = radius * 2.0
+		var base_size: float = max(tex_size.x, tex_size.y)
+		if base_size > 0.0:
+			var s: float = target_diameter / base_size
+			sprite_visual.scale = Vector2(s, s)

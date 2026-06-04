@@ -182,7 +182,8 @@ func get_spiral_wall_info(world_pos: Vector2, old_pos: Vector2 = Vector2.ZERO) -
 	}
 
 func is_gap_segment(segment_index: int) -> bool:
-	return false
+	## skip_at_spawn segment đầu tiên là khe hở — ball đi qua không nảy (GDD 2.5)
+	return segment_index < TRI_SKIP_AT_SPAWN
 
 func get_local_gap(segment_index: int) -> float:
 	var total_points: int = int(SPIRAL_TURNS * SPIRAL_POINTS_PER_TURN)
@@ -253,7 +254,10 @@ func _generate_triangles() -> Array[Dictionary]:
 		# Kích thước tam giác tỷ lệ với khoảng cách vòng (dùng config)
 		var turn_progress: float = theta / theta_max
 		var local_gap: float = lerp(SPIRAL_GAP_MAX, SPIRAL_GAP_MIN, turn_progress)
-		var max_possible_size: float = (local_gap - TRIANGLE_GAP) / 0.866
+		# Phase 3: shape_factor theo hinh dang obstacle
+		var shape: String = _tri_cfg.get("shape", "triangle")
+		var shape_factor: float = _get_shape_factor(shape)
+		var max_possible_size: float = (local_gap - TRIANGLE_GAP) / shape_factor
 		var size: float = clamp(max_possible_size * TRI_SIZE_RATIO, TRI_MIN_SIZE, TRI_MAX_SIZE)
 
 		# Vị trí tam giác: cách đường spiral về phía tâm
@@ -291,6 +295,26 @@ func _generate_triangles() -> Array[Dictionary]:
 		step = max(step, TRIANGLE_ANGLE_STEP)
 		theta += step
 	return result
+
+# ── Shape factor cho size estimation (Phase 3) ─────────────────────────────────
+## Tra ve he so chieu cao visual / size cua mesh, de uoc tinh kich thuoc trong kenh.
+## Triangle: size = canh, visual height = canh * sin(60°) = 0.866
+## Square: size = canh, visual height = canh = 1.0
+## Circle: size = duong kinh, visual height = duong kinh = 1.0
+## Diamond: size = chieu ngang, visual height = 0.8
+## Hexagon: size = duong kinh dinh, visual flat-to-flat = 0.866
+func _get_shape_factor(shape: String) -> float:
+	match shape:
+		"square":
+			return 1.0
+		"circle":
+			return 1.0
+		"diamond":
+			return 0.8
+		"hexagon":
+			return 0.866
+		_:
+			return 0.866  # triangle (default)
 
 # ── Private: Spatial Grid ─────────────────────────────────────────────────────
 

@@ -231,9 +231,9 @@ func _setup_multimesh(triangles: Array[Dictionary]) -> void:
 	_instance_scales.resize(_total_instances)
 	_instance_scales.fill(1.0)
 
-	# Tạo mesh hình tam giác cân nhọn (đỉnh hướng lên, base ở dưới)
-	# Sẽ được xoay đúng hướng qua Transform2D của từng instance
-	var mesh: ArrayMesh = _create_triangle_mesh()
+	# Phase 3: Chọn mesh theo shape từ config
+	var shape: String = _tri_cfg.get("shape", "triangle")
+	var mesh: ArrayMesh = _create_obstacle_mesh(shape)
 
 	# Tạo MultiMesh
 	_multimesh = MultiMesh.new()
@@ -352,6 +352,189 @@ func _create_triangle_mesh() -> ArrayMesh:
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
 
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+# ── Phase 3: Obstacle shape mesh factory ────────────────────────────────────
+
+## Chọn mesh dựa trên shape. Fallback về triangle nếu không nhận dạng được.
+func _create_obstacle_mesh(shape: String) -> ArrayMesh:
+	match shape:
+		"square":
+			return _create_square_mesh()
+		"circle":
+			return _create_circle_mesh()
+		"diamond":
+			return _create_diamond_mesh()
+		"hexagon":
+			return _create_hexagon_mesh()
+		_:
+			return _create_triangle_mesh()
+
+## Mesh hình vuông rỗng viền neon — 8 đỉnh (4 ngoài + 4 trong).
+func _create_square_mesh() -> ArrayMesh:
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	
+	var s: float = _mesh_hollow_scale
+	
+	# 4 đỉnh ngoài hình vuông cạnh 1.0, tâm tại (0,0)
+	var verts: PackedVector2Array = PackedVector2Array()
+	verts.resize(8)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(8)
+	
+	# Outer ring
+	verts[0] = Vector2(-0.5, -0.5)
+	verts[1] = Vector2( 0.5, -0.5)
+	verts[2] = Vector2( 0.5,  0.5)
+	verts[3] = Vector2(-0.5,  0.5)
+	# Inner ring (scaled hollow)
+	verts[4] = Vector2(-0.5, -0.5) * s
+	verts[5] = Vector2( 0.5, -0.5) * s
+	verts[6] = Vector2( 0.5,  0.5) * s
+	verts[7] = Vector2(-0.5,  0.5) * s
+	
+	for i: int in 4:
+		colors[i] = _mesh_outer_color
+		colors[i + 4] = _mesh_inner_color
+	
+	# Triangulation: inner fan + outer ring
+	var indices: PackedInt32Array = PackedInt32Array()
+	# Inner fan (2 triangles)
+	indices.append_array([4, 5, 6])
+	indices.append_array([4, 6, 7])
+	# Ring (8 triangles: 2 per edge)
+	for j: int in 4:
+		var nj: int = (j + 1) % 4
+		indices.append_array([j, nj, j + 4])
+		indices.append_array([nj, nj + 4, j + 4])
+	
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+## Mesh hình tròn rỗng viền neon — polygon fan với n segment.
+func _create_circle_mesh() -> ArrayMesh:
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	
+	var segments: int = _tri_cfg.get("mesh", {}).get("circle_segments", 24)
+	var s: float = _mesh_hollow_scale
+	
+	var total: int = segments * 2
+	var verts: PackedVector2Array = PackedVector2Array()
+	verts.resize(total)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(total)
+	
+	for i: int in segments:
+		var angle: float = (float(i) / float(segments)) * TAU
+		var v: Vector2 = Vector2(cos(angle), sin(angle)) * 0.5
+		verts[i] = v
+		verts[i + segments] = v * s
+		colors[i] = _mesh_outer_color
+		colors[i + segments] = _mesh_inner_color
+	
+	# Triangulation
+	var indices: PackedInt32Array = PackedInt32Array()
+	# Inner fan
+	for i: int in range(1, segments - 1):
+		indices.append_array([segments, segments + i, segments + i + 1])
+	# Outer ring
+	for i: int in segments:
+		var ni: int = (i + 1) % segments
+		indices.append_array([i, ni, i + segments])
+		indices.append_array([ni, ni + segments, i + segments])
+	
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+## Mesh hình thoi (diamond) rỗng viền neon — 8 đỉnh (4 ngoài + 4 trong).
+func _create_diamond_mesh() -> ArrayMesh:
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	
+	var s: float = _mesh_hollow_scale
+	
+	var verts: PackedVector2Array = PackedVector2Array()
+	verts.resize(8)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(8)
+	
+	# Outer diamond (rhombus 1.0 x 0.6)
+	verts[0] = Vector2( 0.0, -0.5)  # top
+	verts[1] = Vector2( 0.5,  0.0)  # right
+	verts[2] = Vector2( 0.0,  0.3)  # bottom (shorter)
+	verts[3] = Vector2(-0.5,  0.0)  # left
+	# Inner
+	for i: int in 4:
+		verts[i + 4] = verts[i] * s
+		colors[i] = _mesh_outer_color
+		colors[i + 4] = _mesh_inner_color
+	
+	var indices: PackedInt32Array = PackedInt32Array()
+	# Inner fan
+	indices.append_array([4, 5, 6])
+	indices.append_array([4, 6, 7])
+	# Ring
+	for j: int in 4:
+		var nj: int = (j + 1) % 4
+		indices.append_array([j, nj, j + 4])
+		indices.append_array([nj, nj + 4, j + 4])
+	
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+## Mesh lục giác rỗng viền neon — 12 đỉnh (6 ngoài + 6 trong).
+func _create_hexagon_mesh() -> ArrayMesh:
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	
+	var s: float = _mesh_hollow_scale
+	
+	var verts: PackedVector2Array = PackedVector2Array()
+	verts.resize(12)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(12)
+	
+	for i: int in 6:
+		var angle: float = (float(i) / 6.0) * TAU - PI / 6.0
+		var v: Vector2 = Vector2(cos(angle), sin(angle)) * 0.5
+		verts[i] = v
+		verts[i + 6] = v * s
+		colors[i] = _mesh_outer_color
+		colors[i + 6] = _mesh_inner_color
+	
+	var indices: PackedInt32Array = PackedInt32Array()
+	# Inner fan
+	for i: int in range(1, 5):
+		indices.append_array([6, 6 + i, 6 + i + 1])
+	# Ring
+	for i: int in 6:
+		var ni: int = (i + 1) % 6
+		indices.append_array([i, ni, i + 6])
+		indices.append_array([ni, ni + 6, i + 6])
+	
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
 	var mesh: ArrayMesh = ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
